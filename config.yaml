@@ -1,0 +1,15 @@
+data:
+  mimiciii_path: "data/mimiciii/"
+  #train_path_2: "data/mimiciii/mimic_data_part2.csv"
+  #test_path: "data/mimiciii/ADMISSIONS.csv"
+model:
+  input_shape: 3
+training:
+  epochs: 10
+  batch_size: 32
+  num_rounds: 10
+privacy:
+  l2_norm_clip: 1.0
+  noise_multiplier: 0.5
+  num_microbatches: 32
+  learning_rate: 0.01
