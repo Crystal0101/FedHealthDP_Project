@@ -49,15 +49,18 @@ class DeepNeuralNetworkModel(nn.Module):
     def __init__(self, input_dim):
         super(DeepNeuralNetworkModel, self).__init__()
         self.network = nn.Sequential(
-            nn.Linear(input_dim, 64),
+            nn.Linear(input_dim, 128),
             nn.ReLU(),
             nn.Dropout(0.5),
-            nn.Linear(64, 32),  # Corrected input dimension of the second linear layer
+            nn.Linear(128, 64),
             nn.ReLU(),
             nn.Dropout(0.5),
+            nn.Linear(64, 32),
+            nn.ReLU(),
             nn.Linear(32, 1),
             nn.Sigmoid()
         )
+
     def forward(self, x):
         return self.network(x)
 
@@ -129,8 +132,8 @@ if __name__ == "__main__":
     input_dim = X_train.shape[1]
 
     # Hyperparameter grid
-    learning_rates = [0.01, 0.001]
-    batch_sizes = [32, 64]
+    learning_rates = [0.01, 0.001, 0.0001]
+    batch_sizes = [32, 64, 128]
 
     best_accuracy = 0
     best_params = {}
@@ -138,11 +141,11 @@ if __name__ == "__main__":
     for lr in learning_rates:
         for batch_size in batch_sizes:
             model = DeepNeuralNetworkModel(input_dim).to(device)
-            optimizer = optim.SGD(model.parameters(), lr=lr)
-            epsilon = 1.0
+            optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
+            epsilon = 0.1  # Reduced noise for better accuracy
             sensitivity = 1.0
 
-            for epoch in range(1, 11):
+            for epoch in range(1, 21):  # Increased epochs for better training
                 train(model, device, client_data, optimizer, batch_size, epoch, epsilon, sensitivity)
 
             accuracy, roc_auc = evaluate_model(model, device, X_test, y_test)
