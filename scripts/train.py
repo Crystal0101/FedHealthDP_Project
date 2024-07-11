@@ -1,25 +1,29 @@
+import os
 import numpy as np
-from sklearn.feature_selection import SelectKBest, f_classif
+import pandas as pd
+import yaml
+import logging
+import tensorflow as tf
+from sklearn.feature_selection import SelectKBest, f_classif, VarianceThreshold
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
-import tensorflow as tf
-from scikeras.wrappers import KerasClassifier
 from sklearn.ensemble import VotingClassifier, RandomForestClassifier, GradientBoostingClassifier
 from xgboost import XGBClassifier
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.model_selection import GridSearchCV, train_test_split, RandomizedSearchCV, cross_val_score
+from sklearn.model_selection import GridSearchCV, train_test_split, RandomizedSearchCV
 from scipy.stats import uniform
-import logging
 from sklearn.metrics import accuracy_score
-import yaml
+from scikeras.wrappers import KerasClassifier
 from preprocess import preprocess
-import pandas as pd
-from sklearn.feature_selection import VarianceThreshold
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def load_config(config_path="config.yaml"):
+    if not os.path.exists(config_path):
+        logging.error(f"Configuration file {config_path} does not exist.")
+        raise FileNotFoundError(f"Configuration file {config_path} not found.")
+    
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
@@ -27,25 +31,22 @@ def preprocess_data():
     features, labels = preprocess()
     logging.info(f'Features shape: {features.shape}, Labels shape: {labels.shape}')
     
-    # 合并稀有类别
-    labels = labels.astype(str)  # 确保所有标签都是字符串类型
+    labels = labels.astype(str)  # Ensure all labels are string type
     diagnosis_counts = labels.value_counts()
     top_diagnoses = diagnosis_counts.head(10).index
     labels = labels.apply(lambda x: x if x in top_diagnoses else 'Other')
     labels_encoded, class_names, label_encoder = encode_labels(labels)
     logging.info(f"Number of classes after keeping top 10 categories: {len(class_names)}")
+    logging.info(f"Total number of classification classes: {len(class_names)}")
+    logging.info(f"Class names: {class_names}")
 
-    # 确保时间列为datetime类型
-    if 'admittime' in features.columns:
-        features['admittime'] = pd.to_datetime(features['admittime'], errors='coerce')
-    if 'dischtime' in features.columns:
-        features['dischtime'] = pd.to_datetime(features['dischtime'], errors='coerce')
-    if 'deathtime' in features.columns:
-        features['deathtime'] = pd.to_datetime(features['deathtime'], errors='coerce')
-    if 'dob' in features.columns:
-        features['dob'] = pd.to_datetime(features['dob'], errors='coerce')
+    # Ensure date columns are datetime type
+    date_cols = ['admittime', 'dischtime', 'deathtime', 'dob']
+    for col in date_cols:
+        if col in features.columns:
+            features[col] = pd.to_datetime(features[col], errors='coerce')
 
-    # 特征工程：增加新的特征
+    # Feature engineering: adding new features
     if 'dischtime' in features.columns and 'admittime' in features.columns:
         features['length_of_stay'] = (features['dischtime'] - features['admittime']).dt.days
     if 'admittime' in features.columns and 'dob' in features.columns:
@@ -53,32 +54,39 @@ def preprocess_data():
     if 'deathtime' in features.columns:
         features['is_dead'] = features['deathtime'].apply(lambda x: 0 if x == pd.Timestamp('2199-01-01 00:00:00') else 1)
 
-    # 移除常量特征
+    # Remove constant features
     selector = VarianceThreshold()
     features = selector.fit_transform(features)
     logging.info(f'Features shape after removing constant features: {features.shape}')
     
-    # 再次检查数据有效性，确保无常量特征或无效值
+    # Check for NaN or infinite values
     if np.any(np.isnan(features)) or np.any(np.isinf(features)):
         raise ValueError("The feature matrix contains NaN or infinite values.")
     
-    # 动态选择最佳特征数量
-    pipe = Pipeline([
-        ('select', SelectKBest(f_classif)),
-        ('model', LogisticRegression(max_iter=1000))
-    ])
-    
-    param_grid = {'select__k': range(10, min(features.shape[1], 51), 10)}
-    search = GridSearchCV(pipe, param_grid, cv=5, verbose=3)
-    search.fit(features, labels_encoded)
-    
-    best_k = search.best_params_['select__k']
-    logging.info(f'Best number of features: {best_k}')
+    # Ensure there are enough features for SelectKBest
+    num_features = features.shape[1]
+    if num_features < 10:
+        logging.warning("Number of features is less than 10, setting select__k to the number of features.")
+        best_k = num_features
+    else:
+        # Dynamic feature selection
+        pipe = Pipeline([
+            ('select', SelectKBest(f_classif)),
+            ('model', LogisticRegression(max_iter=1000))
+        ])
+        
+        param_grid = {'select__k': range(10, min(features.shape[1], 51), 10)}
+        search = GridSearchCV(pipe, param_grid, cv=5, verbose=3)
+        search.fit(features, labels_encoded)
+        
+        best_k = search.best_params_['select__k']
+        logging.info(f'Best number of features: {best_k}')
 
     selector = SelectKBest(f_classif, k=best_k)
     features = selector.fit_transform(features, labels_encoded)
     
     logging.info(f'Features shape after feature selection: {features.shape}')
+    logging.info(f"Total number of features: {features.shape[1]}")
     return features, labels_encoded, class_names, label_encoder
 
 def encode_labels(labels):
@@ -127,8 +135,16 @@ class WrappedNN(KerasClassifier):
         self.num_classes = kwargs.pop('num_classes', None)
         
     def fit(self, X, y, **kwargs):
-        y_categorical = tf.keras.utils.to_categorical(y, self.num_classes)
-        return super().fit(X, y_categorical, callbacks=[EpochLogger()], **kwargs)
+        if y.ndim == 3:  # Reshape y if it has an extra dimension
+            y = y.reshape(y.shape[0], y.shape[2])
+        return super().fit(X, y, callbacks=[EpochLogger()], **kwargs)
+    
+    def score(self, X, y, **kwargs):
+        if y.ndim == 3:  # Reshape y if it has an extra dimension
+            y = y.reshape(y.shape[0], y.shape[2])
+        y_pred = self.predict(X)
+        y_true = np.argmax(y, axis=1)  # Convert one-hot encoded labels to single label format
+        return accuracy_score(y_true, y_pred, **kwargs)
     
     def predict(self, X, **kwargs):
         predictions = super().predict(X, **kwargs)
