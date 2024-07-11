@@ -2,52 +2,72 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import syft as sy
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
-
-# 配置日志
+from sklearn.metrics import accuracy_score, roc_auc_score
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+import os
+import numpy as np
 
-# 加载数据
-features = pd.read_csv("features.csv")
-labels = pd.read_csv("labels.csv")
+# Configure logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# 数据集划分与标准化
-X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.2, random_state=42)
-scaler = StandardScaler()
-X_train = scaler.fit_transform(X_train)
-X_test = scaler.transform(X_test)
+# Function to load client data
+def load_client_data(num_clients):
+    client_data = []
+    for i in range(num_clients):
+        client_features_path = f"/content/client_{i}_features.csv"
+        client_labels_path = f"/content/client_{i}_labels.csv"
+        
+        if os.path.exists(client_features_path) and os.path.exists(client_labels_path):
+            client_features = pd.read_csv(client_features_path)
+            client_labels = pd.read_csv(client_labels_path)
+            client_data.append((client_features, client_labels))
+            logging.info(f"Loaded data for client {i}: features shape {client_features.shape}, labels shape {client_labels.shape}")
+        else:
+            logging.error(f"Files for client {i} not found.")
+            raise FileNotFoundError(f"Files for client {i} not found.")
+    return client_data
 
-# 定义虚拟客户端类
+# Combine and split data
+def combine_and_split_data(client_data):
+    features = pd.concat([data[0] for data in client_data])
+    labels = pd.concat([data[1] for data in client_data])
+    X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.2, random_state=42, stratify=labels)
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_test = scaler.transform(X_test)
+    return X_train, X_test, y_train, y_test
+
+# Virtual client class
 class VirtualClient:
     def __init__(self, id):
         self.id = id
 
-# 创建虚拟客户端
-clients = [VirtualClient(id=f"client_{i}") for i in range(5)]
-
-# 将数据分配给虚拟客户端
-client_data = []
-for i, client in enumerate(clients):
-    client_X_train = torch.tensor(X_train[i::5], dtype=torch.float32)
-    client_y_train = torch.tensor(y_train.values[i::5], dtype=torch.float32).reshape(-1, 1)
-    client_data.append((client_X_train, client_y_train))
-
-# 模型定义
-class LogisticRegressionModel(nn.Module):
+# Enhanced model definition
+class DeepNeuralNetworkModel(nn.Module):
     def __init__(self, input_dim):
-        super(LogisticRegressionModel, self).__init__()
-        self.linear = nn.Linear(input_dim, 1)
-
+        super(DeepNeuralNetworkModel, self).__init__()
+        self.network = nn.Sequential(
+            nn.Linear(input_dim, 64),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(64, 32),  # Corrected input dimension of the second linear layer
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(32, 1),
+            nn.Sigmoid()
+        )
     def forward(self, x):
-        outputs = torch.sigmoid(self.linear(x))
-        return outputs
+        return self.network(x)
 
-# 联邦学习训练
-def train(model, device, client_data, optimizer, epoch, epsilon, sensitivity):
+# Differential privacy mechanism
+def add_noise(tensor, epsilon, sensitivity):
+    noise = torch.randn(tensor.size()) * (sensitivity / epsilon)
+    return tensor + noise
+
+# Federated learning training
+def train(model, device, client_data, optimizer, batch_size, epoch, epsilon, sensitivity):
     model.train()
     epoch_loss = 0.0
     for data, target in client_data:
@@ -57,45 +77,79 @@ def train(model, device, client_data, optimizer, epoch, epsilon, sensitivity):
         loss = nn.BCELoss()(output, target)
         loss.backward()
         optimizer.step()
-        epoch_loss += loss.item() * len(data)  # accumulate the loss for this batch
+        epoch_loss += loss.item() * len(data)
         logging.info(f'Train Epoch: {epoch} | Batch Loss: {loss.item():.4f}')
     
-    # 加噪
+    # Add noise
     for param in model.parameters():
         param.data = add_noise(param.data, epsilon, sensitivity)
     
-    # 计算平均损失
+    # Calculate average loss
     epoch_loss /= len(client_data)
     logging.info(f'Train Epoch: {epoch} | Average Loss: {epoch_loss:.4f}')
 
-# 差分隐私机制
-def add_noise(tensor, epsilon, sensitivity):
-    noise = torch.randn(tensor.size()) * (sensitivity / epsilon)
-    return tensor + noise
+# Evaluate the model
+def evaluate_model(model, device, X_test, y_test):
+    model.eval()
+    test_loss = 0
+    correct = 0
+    y_true = []
+    y_pred = []
+    
+    with torch.no_grad():
+        for data, target in zip(torch.tensor(X_test, dtype=torch.float32), torch.tensor(y_test.values, dtype=torch.float32).reshape(-1, 1)):
+            data, target = data.to(device), target.to(device)
+            output = model(data)
+            test_loss += nn.BCELoss()(output, target).item()
+            pred = output.round()
+            correct += pred.eq(target.view_as(pred)).sum().item()
+            y_true.extend(target.cpu().numpy())
+            y_pred.extend(output.cpu().numpy())
+    
+    test_loss /= len(X_test)
+    accuracy = correct / len(X_test)
+    roc_auc = roc_auc_score(y_true, y_pred)
+    logging.info(f'Test set: Average loss: {test_loss:.4f}, Accuracy: {accuracy:.4f}, ROC AUC: {roc_auc:.4f}')
+    return accuracy, roc_auc
 
-# 训练模型
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-input_dim = X_train.shape[1]
-model = LogisticRegressionModel(input_dim).to(device)
-optimizer = optim.SGD(model.parameters(), lr=0.01)
-epsilon = 1.0
-sensitivity = 1.0
+# Main script
+if __name__ == "__main__":
+    num_clients = 5
+    client_data = load_client_data(num_clients)
+    X_train, X_test, y_train, y_test = combine_and_split_data(client_data)
+    
+    clients = [VirtualClient(id=f"client_{i}") for i in range(num_clients)]
+    client_data = []
+    for i, client in enumerate(clients):
+        client_X_train = torch.tensor(X_train[i::5], dtype=torch.float32)
+        client_y_train = torch.tensor(y_train.values[i::5], dtype=torch.float32).reshape(-1, 1)
+        client_data.append((client_X_train, client_y_train))
 
-for epoch in range(1, 11):
-    train(model, device, client_data, optimizer, epoch, epsilon, sensitivity)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    input_dim = X_train.shape[1]
 
-# 评估模型
-model.eval()
-test_loss = 0
-correct = 0
-with torch.no_grad():
-    for data, target in zip(torch.tensor(X_test, dtype=torch.float32), torch.tensor(y_test.values, dtype=torch.float32).reshape(-1, 1)):
-        data, target = data.to(device), target.to(device)
-        output = model(data)
-        test_loss += nn.BCELoss()(output, target).item()
-        pred = output.round()
-        correct += pred.eq(target.view_as(pred)).sum().item()
+    # Hyperparameter grid
+    learning_rates = [0.01, 0.001]
+    batch_sizes = [32, 64]
 
-test_loss /= len(X_test)
-accuracy = correct / len(X_test)
-logging.info(f'Test set: Average loss: {test_loss:.4f}, Accuracy: {accuracy:.4f}')
+    best_accuracy = 0
+    best_params = {}
+
+    for lr in learning_rates:
+        for batch_size in batch_sizes:
+            model = DeepNeuralNetworkModel(input_dim).to(device)
+            optimizer = optim.SGD(model.parameters(), lr=lr)
+            epsilon = 1.0
+            sensitivity = 1.0
+
+            for epoch in range(1, 11):
+                train(model, device, client_data, optimizer, batch_size, epoch, epsilon, sensitivity)
+
+            accuracy, roc_auc = evaluate_model(model, device, X_test, y_test)
+            
+            if accuracy > best_accuracy:
+                best_accuracy = accuracy
+                best_params = {'learning_rate': lr, 'batch_size': batch_size}
+                logging.info(f'New best params: {best_params}, Accuracy: {best_accuracy:.4f}, ROC AUC: {roc_auc:.4f}')
+
+    logging.info(f'Best Hyperparameters: {best_params}, Best Accuracy: {best_accuracy:.4f}')
