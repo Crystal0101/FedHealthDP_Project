@@ -12,7 +12,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 with open("/content/FedHealthDP_Project/config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
-# 修改后的 load_data 函数
 def load_data(file_name, usecols=None, dtype=None, chunksize=50000):
     file_path = os.path.join("/content/FedHealthDP_Project/data/mimiciii", file_name)
     logging.info(f"Loading data from {file_path}...")
@@ -31,7 +30,6 @@ def load_data(file_name, usecols=None, dtype=None, chunksize=50000):
         logging.error(f"Error loading {file_path}: {e}")
         return None
 
-# 修改后的 preprocess 函数
 def preprocess():
     try:
         logging.info("Starting preprocessing...")
@@ -102,7 +100,7 @@ def preprocess():
         client_data = []
 
         for i in range(num_clients):
-            client_features, _, client_labels, _ = train_test_split(features, labels, test_size=0.8, random_state=i)
+            client_features, _, client_labels, _ = train_test_split(features, labels, test_size=0.2, random_state=i)
             client_data.append((client_features, client_labels))
 
         return client_data
@@ -120,6 +118,3 @@ if __name__ == "__main__":
             logging.info(f"Client {i} data saved. Features shape: {client_features.shape}, Labels shape: {client_labels.shape}")
     else:
         logging.error("Preprocessing failed.")
-
-
-

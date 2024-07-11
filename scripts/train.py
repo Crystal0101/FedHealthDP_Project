@@ -7,7 +7,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, roc_auc_score
 import logging
 import os
-import numpy as np
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -49,13 +48,20 @@ class DeepNeuralNetworkModel(nn.Module):
     def __init__(self, input_dim):
         super(DeepNeuralNetworkModel, self).__init__()
         self.network = nn.Sequential(
-            nn.Linear(input_dim, 128),
+            nn.Linear(input_dim, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(256, 128),
+            nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
             nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(64, 32),
+            nn.BatchNorm1d(32),
             nn.ReLU(),
             nn.Linear(32, 1),
             nn.Sigmoid()
@@ -70,14 +76,14 @@ def add_noise(tensor, epsilon, sensitivity):
     return tensor + noise
 
 # Federated learning training
-def train(model, device, client_data, optimizer, batch_size, epoch, epsilon, sensitivity):
+def train(model, device, client_data, optimizer, criterion, epoch, epsilon, sensitivity):
     model.train()
     epoch_loss = 0.0
     for data, target in client_data:
         data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
         output = model(data)
-        loss = nn.BCELoss()(output, target)
+        loss = criterion(output, target)
         loss.backward()
         optimizer.step()
         epoch_loss += loss.item() * len(data)
@@ -92,7 +98,7 @@ def train(model, device, client_data, optimizer, batch_size, epoch, epsilon, sen
     logging.info(f'Train Epoch: {epoch} | Average Loss: {epoch_loss:.4f}')
 
 # Evaluate the model
-def evaluate_model(model, device, X_test, y_test):
+def evaluate_model(model, device, X_test, y_test, criterion):
     model.eval()
     test_loss = 0
     correct = 0
@@ -100,16 +106,15 @@ def evaluate_model(model, device, X_test, y_test):
     y_pred = []
     
     with torch.no_grad():
-        for data, target in zip(torch.tensor(X_test, dtype=torch.float32), torch.tensor(y_test.values, dtype=torch.float32).reshape(-1, 1)):
-            data, target = data.to(device), target.to(device)
-            output = model(data)
-            test_loss += nn.BCELoss()(output, target).item()
-            pred = output.round()
-            correct += pred.eq(target.view_as(pred)).sum().item()
-            y_true.extend(target.cpu().numpy())
-            y_pred.extend(output.cpu().numpy())
+        X_test = torch.tensor(X_test, dtype=torch.float32).to(device)
+        y_test = torch.tensor(y_test.values, dtype=torch.float32).reshape(-1, 1).to(device)
+        output = model(X_test)
+        test_loss = criterion(output, y_test).item()
+        pred = output.round()
+        correct = pred.eq(y_test.view_as(pred)).sum().item()
+        y_true = y_test.cpu().numpy()
+        y_pred = output.cpu().numpy()
     
-    test_loss /= len(X_test)
     accuracy = correct / len(X_test)
     roc_auc = roc_auc_score(y_true, y_pred)
     logging.info(f'Test set: Average loss: {test_loss:.4f}, Accuracy: {accuracy:.4f}, ROC AUC: {roc_auc:.4f}')
@@ -138,6 +143,8 @@ if __name__ == "__main__":
     best_accuracy = 0
     best_params = {}
 
+    criterion = nn.BCELoss()
+
     for lr in learning_rates:
         for batch_size in batch_sizes:
             model = DeepNeuralNetworkModel(input_dim).to(device)
@@ -146,9 +153,13 @@ if __name__ == "__main__":
             sensitivity = 1.0
 
             for epoch in range(1, 21):  # Increased epochs for better training
-                train(model, device, client_data, optimizer, batch_size, epoch, epsilon, sensitivity)
+                # Federated training with batch processing
+                for i in range(0, len(client_data), batch_size):
+                    batch_data = client_data[i:i+batch_size]
+                    if batch_data:
+                        train(model, device, batch_data, optimizer, criterion, epoch, epsilon, sensitivity)
 
-            accuracy, roc_auc = evaluate_model(model, device, X_test, y_test)
+            accuracy, roc_auc = evaluate_model(model, device, X_test, y_test, criterion)
             
             if accuracy > best_accuracy:
                 best_accuracy = accuracy
