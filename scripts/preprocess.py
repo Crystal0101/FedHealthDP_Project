@@ -12,8 +12,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 with open("/content/FedHealthDP_Project/config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
+# 修改后的 load_data 函数
 def load_data(file_name, usecols=None, dtype=None, chunksize=50000):
-    file_path = os.path.join(config['data']['mimiciii_path'], file_name)
+    file_path = os.path.join("/content/FedHealthDP_Project/data/mimiciii", file_name)
     logging.info(f"Loading data from {file_path}...")
     try:
         data_iter = pd.read_csv(
@@ -30,6 +31,7 @@ def load_data(file_name, usecols=None, dtype=None, chunksize=50000):
         logging.error(f"Error loading {file_path}: {e}")
         return None
 
+# 修改后的 preprocess 函数
 def preprocess():
     try:
         logging.info("Starting preprocessing...")
@@ -46,12 +48,12 @@ def preprocess():
         dtype_spec = {'icd9_code': str, 'valuenum': float, 'value': str, 'drug': str}
 
         # Load datasets
-        patients = load_data("PATIENTS.csv", usecols=patients_cols, dtype=dtype_spec)
-        admissions = load_data("ADMISSIONS.csv", usecols=admissions_cols, dtype=dtype_spec)
-        diagnoses_icd = load_data("DIAGNOSES_ICD.csv", usecols=diagnoses_icd_cols, dtype=dtype_spec)
-        labevents = load_data("LABEVENTS.csv", usecols=labevents_cols, dtype=dtype_spec)
-        chartevents = load_data("CHARTEVENTS.csv", usecols=chartevents_cols, dtype=dtype_spec)
-        prescriptions = load_data("PRESCRIPTIONS.csv", usecols=prescriptions_cols, dtype=dtype_spec)
+        patients = load_data("fixed_PATIENTS.csv", usecols=patients_cols, dtype=dtype_spec)
+        admissions = load_data("fixed_ADMISSIONS.csv", usecols=admissions_cols, dtype=dtype_spec)
+        diagnoses_icd = load_data("fixed_DIAGNOSES_ICD.csv", usecols=diagnoses_icd_cols, dtype=dtype_spec)
+        labevents = load_data("fixed_LABEVENTS.csv", usecols=labevents_cols, dtype=dtype_spec)
+        chartevents = load_data("fixed_CHARTEVENTS.csv", usecols=chartevents_cols, dtype=dtype_spec)
+        prescriptions = load_data("fixed_PRESCRIPTIONS.csv", usecols=prescriptions_cols, dtype=dtype_spec)
 
         if any(df is None for df in [patients, admissions, diagnoses_icd, labevents, chartevents, prescriptions]):
             logging.error("One or more data files could not be loaded.")
@@ -70,7 +72,7 @@ def preprocess():
         admissions['length_of_stay'] = (admissions['dischtime'] - admissions['admittime']).dt.days
 
         # Merge datasets
-        merged_data = admissions.merge(patients[['subject_id']], on='subject_id', how='left')
+        merged_data = admissions.merge(patients[['subject_id', 'dob']], on='subject_id', how='left')
         merged_data = merged_data.merge(diagnoses_icd, on=['subject_id', 'hadm_id'], how='left')
         merged_data = merged_data.merge(labevents, on=['subject_id', 'hadm_id'], how='left')
         merged_data = merged_data.merge(chartevents, on=['subject_id', 'hadm_id'], how='left')
@@ -109,11 +111,15 @@ def preprocess():
         logging.error(f"An error occurred: {e}")
         return None
 
-
-# 示例调用
 if __name__ == "__main__":
-    features, labels = preprocess()
-    if features is not None and labels is not None:
-        print(features.head(), labels.head())
+    client_data = preprocess()
+    if client_data is not None:
+        for i, (client_features, client_labels) in enumerate(client_data):
+            client_features.to_csv(f"client_{i}_features.csv", index=False)
+            client_labels.to_csv(f"client_{i}_labels.csv", index=False)
+            logging.info(f"Client {i} data saved. Features shape: {client_features.shape}, Labels shape: {client_labels.shape}")
     else:
-        print("Preprocessing failed.")
+        logging.error("Preprocessing failed.")
+
+
+

@@ -1,258 +1,101 @@
-import os
-import numpy as np
 import pandas as pd
-import yaml
-import logging
-import tensorflow as tf
-from sklearn.feature_selection import SelectKBest, f_classif, VarianceThreshold
-from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import Pipeline
-from sklearn.ensemble import VotingClassifier, RandomForestClassifier, GradientBoostingClassifier
-from xgboost import XGBClassifier
-from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.model_selection import GridSearchCV, train_test_split, RandomizedSearchCV
-from scipy.stats import uniform
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import syft as sy
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
-from scikeras.wrappers import KerasClassifier
-from preprocess import preprocess
 
-# Configure logging
+# 配置日志
+import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def load_config(config_path="config.yaml"):
-    if not os.path.exists(config_path):
-        logging.error(f"Configuration file {config_path} does not exist.")
-        raise FileNotFoundError(f"Configuration file {config_path} not found.")
+# 加载数据
+features = pd.read_csv("features.csv")
+labels = pd.read_csv("labels.csv")
+
+# 数据集划分与标准化
+X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.2, random_state=42)
+scaler = StandardScaler()
+X_train = scaler.fit_transform(X_train)
+X_test = scaler.transform(X_test)
+
+# 定义虚拟客户端类
+class VirtualClient:
+    def __init__(self, id):
+        self.id = id
+
+# 创建虚拟客户端
+clients = [VirtualClient(id=f"client_{i}") for i in range(5)]
+
+# 将数据分配给虚拟客户端
+client_data = []
+for i, client in enumerate(clients):
+    client_X_train = torch.tensor(X_train[i::5], dtype=torch.float32)
+    client_y_train = torch.tensor(y_train.values[i::5], dtype=torch.float32).reshape(-1, 1)
+    client_data.append((client_X_train, client_y_train))
+
+# 模型定义
+class LogisticRegressionModel(nn.Module):
+    def __init__(self, input_dim):
+        super(LogisticRegressionModel, self).__init__()
+        self.linear = nn.Linear(input_dim, 1)
+
+    def forward(self, x):
+        outputs = torch.sigmoid(self.linear(x))
+        return outputs
+
+# 联邦学习训练
+def train(model, device, client_data, optimizer, epoch, epsilon, sensitivity):
+    model.train()
+    epoch_loss = 0.0
+    for data, target in client_data:
+        data, target = data.to(device), target.to(device)
+        optimizer.zero_grad()
+        output = model(data)
+        loss = nn.BCELoss()(output, target)
+        loss.backward()
+        optimizer.step()
+        epoch_loss += loss.item() * len(data)  # accumulate the loss for this batch
+        logging.info(f'Train Epoch: {epoch} | Batch Loss: {loss.item():.4f}')
     
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f)
-
-def preprocess_data():
-    features, labels = preprocess()
-    logging.info(f'Features shape: {features.shape}, Labels shape: {labels.shape}')
+    # 加噪
+    for param in model.parameters():
+        param.data = add_noise(param.data, epsilon, sensitivity)
     
-    labels = labels.astype(str)  # Ensure all labels are string type
-    diagnosis_counts = labels.value_counts()
-    top_diagnoses = diagnosis_counts.head(10).index
-    labels = labels.apply(lambda x: x if x in top_diagnoses else 'Other')
-    labels_encoded, class_names, label_encoder = encode_labels(labels)
-    logging.info(f"Number of classes after keeping top 10 categories: {len(class_names)}")
-    logging.info(f"Total number of classification classes: {len(class_names)}")
-    logging.info(f"Class names: {class_names}")
+    # 计算平均损失
+    epoch_loss /= len(client_data)
+    logging.info(f'Train Epoch: {epoch} | Average Loss: {epoch_loss:.4f}')
 
-    # Ensure date columns are datetime type
-    date_cols = ['admittime', 'dischtime', 'deathtime', 'dob']
-    for col in date_cols:
-        if col in features.columns:
-            features[col] = pd.to_datetime(features[col], errors='coerce')
+# 差分隐私机制
+def add_noise(tensor, epsilon, sensitivity):
+    noise = torch.randn(tensor.size()) * (sensitivity / epsilon)
+    return tensor + noise
 
-    # Feature engineering: adding new features
-    if 'dischtime' in features.columns and 'admittime' in features.columns:
-        features['length_of_stay'] = (features['dischtime'] - features['admittime']).dt.days
-    if 'admittime' in features.columns and 'dob' in features.columns:
-        features['age'] = features['admittime'].dt.year - features['dob'].dt.year
-    if 'deathtime' in features.columns:
-        features['is_dead'] = features['deathtime'].apply(lambda x: 0 if x == pd.Timestamp('2199-01-01 00:00:00') else 1)
+# 训练模型
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+input_dim = X_train.shape[1]
+model = LogisticRegressionModel(input_dim).to(device)
+optimizer = optim.SGD(model.parameters(), lr=0.01)
+epsilon = 1.0
+sensitivity = 1.0
 
-    # Remove constant features
-    selector = VarianceThreshold()
-    features = selector.fit_transform(features)
-    logging.info(f'Features shape after removing constant features: {features.shape}')
-    
-    # Check for NaN or infinite values
-    if np.any(np.isnan(features)) or np.any(np.isinf(features)):
-        raise ValueError("The feature matrix contains NaN or infinite values.")
-    
-    # Ensure there are enough features for SelectKBest
-    num_features = features.shape[1]
-    if num_features < 10:
-        logging.warning("Number of features is less than 10, setting select__k to the number of features.")
-        best_k = num_features
-    else:
-        # Dynamic feature selection
-        pipe = Pipeline([
-            ('select', SelectKBest(f_classif)),
-            ('model', LogisticRegression(max_iter=1000))
-        ])
-        
-        param_grid = {'select__k': range(10, min(features.shape[1], 51), 10)}
-        search = GridSearchCV(pipe, param_grid, cv=5, verbose=3)
-        search.fit(features, labels_encoded)
-        
-        best_k = search.best_params_['select__k']
-        logging.info(f'Best number of features: {best_k}')
+for epoch in range(1, 11):
+    train(model, device, client_data, optimizer, epoch, epsilon, sensitivity)
 
-    selector = SelectKBest(f_classif, k=best_k)
-    features = selector.fit_transform(features, labels_encoded)
-    
-    logging.info(f'Features shape after feature selection: {features.shape}')
-    logging.info(f"Total number of features: {features.shape[1]}")
-    return features, labels_encoded, class_names, label_encoder
+# 评估模型
+model.eval()
+test_loss = 0
+correct = 0
+with torch.no_grad():
+    for data, target in zip(torch.tensor(X_test, dtype=torch.float32), torch.tensor(y_test.values, dtype=torch.float32).reshape(-1, 1)):
+        data, target = data.to(device), target.to(device)
+        output = model(data)
+        test_loss += nn.BCELoss()(output, target).item()
+        pred = output.round()
+        correct += pred.eq(target.view_as(pred)).sum().item()
 
-def encode_labels(labels):
-    label_encoder = LabelEncoder()
-    labels_encoded = label_encoder.fit_transform(labels)
-    class_names = label_encoder.classes_
-    return labels_encoded, class_names, label_encoder
-
-def split_data(features, labels_encoded):
-    return train_test_split(features, labels_encoded, test_size=0.2, random_state=42)
-
-def standardize_data(X_train, X_test):
-    scaler = StandardScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_test = scaler.transform(X_test)
-    logging.info(f'After standardization - X_train shape: {X_train.shape}, X_test shape: {X_test.shape}')
-    return X_train, X_test, scaler
-
-def one_hot_encode_labels(y_train, y_test, num_classes):
-    y_train_categorical = tf.keras.utils.to_categorical(y_train, num_classes)
-    y_test_categorical = tf.keras.utils.to_categorical(y_test, num_classes)
-    return y_train_categorical, y_test_categorical
-
-def create_multiclass_model(input_shape, num_classes, optimizer='adam', dropout_rate=0.5, init_mode='uniform', learning_rate=0.01):
-    model = tf.keras.models.Sequential([
-        tf.keras.layers.Input(shape=(input_shape,)),
-        tf.keras.layers.Dense(64, activation='relu', kernel_initializer=init_mode, kernel_regularizer=tf.keras.regularizers.l2(0.01)),
-        tf.keras.layers.Dropout(dropout_rate),
-        tf.keras.layers.Dense(16, activation='relu', kernel_initializer=init_mode, kernel_regularizer=tf.keras.regularizers.l2(0.01)),
-        tf.keras.layers.Dropout(dropout_rate),
-        tf.keras.layers.Dense(num_classes, activation='softmax')
-    ])
-    optimizer_instance = tf.keras.optimizers.get(optimizer)
-    optimizer_instance.learning_rate = learning_rate
-    model.compile(optimizer=optimizer_instance, loss='categorical_crossentropy', metrics=['accuracy'])
-    logging.info(f'Model created with input shape: {input_shape}, num classes: {num_classes}')
-    return model
-
-class EpochLogger(tf.keras.callbacks.Callback):
-    def on_epoch_end(self, epoch, logs=None):
-        logging.info(f'Epoch {epoch + 1}: loss = {logs["loss"]}, accuracy = {logs["accuracy"]}, val_loss = {logs["val_loss"]}, val_accuracy = {logs["val_accuracy"]}')
-
-class WrappedNN(KerasClassifier):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.num_classes = kwargs.pop('num_classes', None)
-        
-    def fit(self, X, y, **kwargs):
-        if y.ndim == 3:  # Reshape y if it has an extra dimension
-            y = y.reshape(y.shape[0], y.shape[2])
-        return super().fit(X, y, callbacks=[EpochLogger()], **kwargs)
-    
-    def score(self, X, y, **kwargs):
-        if y.ndim == 3:  # Reshape y if it has an extra dimension
-            y = y.reshape(y.shape[0], y.shape[2])
-        y_pred = self.predict(X)
-        y_true = np.argmax(y, axis=1)  # Convert one-hot encoded labels to single label format
-        return accuracy_score(y_true, y_pred, **kwargs)
-    
-    def predict(self, X, **kwargs):
-        predictions = super().predict(X, **kwargs)
-        return np.argmax(predictions, axis=1)
-    
-    def predict_proba(self, X, **kwargs):
-        proba = super().predict_proba(X, **kwargs)
-        if proba.ndim == 1:
-            proba = np.expand_dims(proba, axis=1)
-        if proba.shape[1] == 1:  # Binary classification case
-            proba = np.hstack((1 - proba, proba))
-        return proba
-
-def predict_disease(model, input_data, scaler, label_encoder):
-    input_data = scaler.transform([input_data])
-    logging.info(f'Input data shape for prediction: {input_data.shape}')
-    prediction = model.predict(input_data)
-    if len(prediction.shape) > 1:
-        predicted_class = np.argmax(prediction, axis=1)
-    else:
-        predicted_class = np.argmax(prediction)
-    predicted_disease = label_encoder.inverse_transform([predicted_class])[0]
-    return predicted_disease
-
-
-if __name__ == "__main__":
-    config = load_config()
-
-    features, labels_encoded, class_names, label_encoder = preprocess_data()
-    logging.info(f"Unique labels: {np.unique(labels_encoded)}")
-    logging.info(f"Number of classes: {len(class_names)}")
-
-    X_train, X_test, y_train, y_test = split_data(features, labels_encoded)
-    logging.info(f'Training data shape: {X_train.shape}')
-    logging.info(f'Test data shape: {X_test.shape}')
-    X_train, X_test, scaler = standardize_data(X_train, X_test)
-    logging.info(f'Scaled training data shape: {X_train.shape}')
-    logging.info(f'Scaled test data shape: {X_test.shape}')
-
-    num_classes = len(class_names)
-    y_train_categorical, y_test_categorical = one_hot_encode_labels(y_train, y_test, num_classes)
-    logging.info(f'One-hot encoded training labels shape: {y_train_categorical.shape}')
-    logging.info(f'One-hot encoded test labels shape: {y_test_categorical.shape}')
-
-    multiclass_model = KerasClassifier(
-        model=create_multiclass_model,
-        model__input_shape=X_train.shape[1],
-        model__num_classes=num_classes,
-        verbose=0,  # 设置为0以避免Keras打印冗长输出
-        batch_size=32,
-        epochs=1,
-        optimizer='adam',
-        dropout_rate=0.5,
-        init_mode='uniform',
-        learning_rate=0.001
-    )
-
-    param_distributions = {
-        'model__optimizer': ['SGD', 'Adam', 'RMSprop', 'Nadam'],
-        'model__dropout_rate': uniform(0.1, 0.6),
-        'model__init_mode': ['uniform', 'lecun_uniform', 'normal', 'he_normal'],
-        'model__learning_rate': uniform(0.0001, 0.1)
-    }
-
-    logging.info('Starting RandomizedSearchCV...')
-    random_search = RandomizedSearchCV(estimator=multiclass_model, param_distributions=param_distributions, n_iter=100, n_jobs=-1, cv=5, verbose=3, error_score='raise', random_state=42)
-    random_search_result = random_search.fit(X_train, y_train_categorical)
-    logging.info(f"Best: {random_search_result.best_score_} using {random_search_result.best_params_}")
-
-    best_multiclass_model = random_search_result.best_estimator_
-    logging.info(f'Best model input shape: {best_multiclass_model.model_.input_shape}')
-    logging.info(f'Best model output shape: {best_multiclass_model.model_.output_shape}')
-
-    multiclass_accuracy = best_multiclass_model.score(X_test, y_test_categorical)
-    logging.info(f'Multiclass Model Test Accuracy: {multiclass_accuracy}')
-
-    rf_model = RandomForestClassifier(n_estimators=200, random_state=42, verbose=1)  # 设置为1以打印训练进度
-    xgb_model = XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42, verbosity=1)  # 设置为1以打印训练进度
-    gb_model = GradientBoostingClassifier(n_estimators=200, random_state=42, verbose=1)  # 设置为1以打印训练进度
-    wrapped_nn_model = WrappedNN(
-        model=create_multiclass_model,
-        model__input_shape=X_train.shape[1],
-        model__num_classes=num_classes,
-        verbose=1,  # 设置为1以打印训练进度
-        batch_size=32,
-        epochs=1,
-        optimizer='adam',
-        dropout_rate=0.5,
-        init_mode='uniform',
-        learning_rate=0.001
-    )
-
-    # Train each model and check output shape
-    models = [wrapped_nn_model, rf_model, xgb_model, gb_model]
-    for model in models:
-        logging.info(f'Starting training for model: {model.__class__.__name__}')
-        model.fit(X_train, y_train)
-        logging.info(f'Training completed for model: {model.__class__.__name__}')
-        logging.info(f'Model score: {model.score(X_test, y_test)}')
-
-    ensemble_model = VotingClassifier(estimators=[
-        ('nn', wrapped_nn_model),
-        ('rf', rf_model),
-        ('xgb', xgb_model),
-        ('gb', gb_model)
-    ], voting='soft', n_jobs=-1)
-
-    logging.info('Starting training for ensemble model...')
-    ensemble_model.fit(X_train, y_train)
-    ensemble_accuracy = accuracy_score(y_test, ensemble_model.predict(X_test))
-    logging.info(f'Ensemble Model Test Accuracy: {ensemble_accuracy}')
+test_loss /= len(X_test)
+accuracy = correct / len(X_test)
+logging.info(f'Test set: Average loss: {test_loss:.4f}, Accuracy: {accuracy:.4f}')
