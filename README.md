@@ -2,7 +2,8 @@
 
 ## 项目简介
 
-该项目旨在使用差分隐私的联邦学习技术训练疾病预测模型，数据来自于MIMIC-III数据库。
+The FedHealthDP Project aims to train disease prediction models using federated learning with differential privacy, leveraging data from the MIMIC-III database.
+
 
 ## 目录结构
 
@@ -21,31 +22,34 @@
 pip install -r requirements.txt
 ```
 
-2. 运行数据预处理脚本：
+2. Environment Setup
 
 ```bash
-python3.9 scripts/preprocess.py
+export DATA_DIR=/path/to/data
+export MODEL_DIR=/path/to/models
 ```
 
-3. 训练本地模型：
+3. Running the Project
+Data Preprocessing:
 
 ```bash
-python3.9 scripts/train.py
+python scripts/preprocess_data.py --input $DATA_DIR/raw --output $DATA_DIR/processed
 ```
 
-4. 运行联邦学习过程：
+Local Model Training:
 
 ```bash
-python3.9 scripts/federated_learning.py
+python scripts/train_local_model.py --data $DATA_DIR/processed --model $MODEL_DIR/local_model
 ```
 
-5. 评估模型：
+Federated Learning:
 
 ```bash
-python scripts/evaluate.py
+python scripts/federated_learning.py --data $DATA_DIR/processed --model $MODEL_DIR/federated_model
 ```
+Evaluation:
 
-
-
-
+```bash
+python scripts/evaluate_model.py --model $MODEL_DIR/federated_model --data $DATA_DIR/proc
+```
 
