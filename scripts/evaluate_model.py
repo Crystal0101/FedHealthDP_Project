@@ -24,7 +24,7 @@ class CancerModel(nn.Module):
         return self.linear_relu_stack(x)
 
 # 数据标准化和转换非数值列
-def load_and_process_data(file_path, y_file_path, y_column_name, all_feature_columns, categorical_columns=None, date_columns=None):
+def preprocess_data(file_path, y_file_path, y_column_name, all_feature_columns, categorical_columns=None, date_columns=None):
     data = pd.read_csv(file_path)
     y_data = pd.read_csv(y_file_path)
 
@@ -80,9 +80,9 @@ def evaluate_model(model_path, input_shape, X_test, y_test):
         predictions = (outputs >= 0.5).float()
 
     accuracy = accuracy_score(targets.cpu(), predictions.cpu())
-    precision = precision_score(targets.cpu(), predictions.cpu())
-    recall = recall_score(targets.cpu(), predictions.cpu())
-    f1 = f1_score(targets.cpu(), predictions.cpu())
+    precision = precision_score(targets.cpu(), predictions.cpu(), zero_division=1)
+    recall = recall_score(targets.cpu(), predictions.cpu(), zero_division=1)
+    f1 = f1_score(targets.cpu(), predictions.cpu(), zero_division=1)
 
     print(f"Accuracy: {accuracy:.4f}")
     print(f"Precision: {precision:.4f}")
@@ -98,28 +98,28 @@ print(f"Loaded feature columns with {len(feature_columns)} features.")
 # 加载数据并评估模型
 try:
     # 乳腺癌数据评估
-    X_breast_test, y_breast_test = load_and_process_data(
+    X_breast_test, y_breast_test = preprocess_data(
         '/content/FedHealthDP_Project/data/split/breast_cancer_X_test.csv',
         '/content/FedHealthDP_Project/data/split/breast_cancer_y_test.csv',
         'diagnosis', all_feature_columns=feature_columns)
     evaluate_model('/content/FedHealthDP_Project/models/global_model.pth', len(feature_columns), X_breast_test, y_breast_test)
 
     # 肺癌数据评估
-    X_lung_test, y_lung_test = load_and_process_data(
+    X_lung_test, y_lung_test = preprocess_data(
         '/content/FedHealthDP_Project/data/split/lung_cancer_X_test.csv',
         '/content/FedHealthDP_Project/data/split/lung_cancer_y_test.csv',
         'LUNG_CANCER', all_feature_columns=feature_columns)
     evaluate_model('/content/FedHealthDP_Project/models/global_model.pth', len(feature_columns), X_lung_test, y_lung_test)
 
     # 前列腺癌数据评估
-    X_prostate_test, y_prostate_test = load_and_process_data(
+    X_prostate_test, y_prostate_test = preprocess_data(
         '/content/FedHealthDP_Project/data/split/prostate_cancer_X_test.csv',
         '/content/FedHealthDP_Project/data/split/prostate_cancer_y_test.csv',
         'diagnosis_result', all_feature_columns=feature_columns)
     evaluate_model('/content/FedHealthDP_Project/models/global_model.pth', len(feature_columns), X_prostate_test, y_prostate_test)
 
     # MIMIC数据评估
-    X_mimic_test, y_mimic_test = load_and_process_data(
+    X_mimic_test, y_mimic_test = preprocess_data(
         '/content/FedHealthDP_Project/data/split/mimic_X_test.csv',
         '/content/FedHealthDP_Project/data/split/mimic_y_test.csv',
         'has_cancer', all_feature_columns=feature_columns,
