@@ -12,8 +12,12 @@ class CancerModel(nn.Module):
     def __init__(self, input_shape):
         super(CancerModel, self).__init__()
         self.linear_relu_stack = nn.Sequential(
-            nn.Linear(input_shape, 128),
+            nn.Linear(input_shape, 256),
             nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Dropout(0.5),
             nn.Linear(128, 64),
             nn.ReLU(),
             nn.Linear(64, 1),

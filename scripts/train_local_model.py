@@ -17,8 +17,12 @@ class CancerModel(nn.Module):
     def __init__(self, input_shape):
         super(CancerModel, self).__init__()
         self.linear_relu_stack = nn.Sequential(
-            nn.Linear(input_shape, 128),
+            nn.Linear(input_shape, 256),
             nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Dropout(0.5),
             nn.Linear(128, 64),
             nn.ReLU(),
             nn.Linear(64, 1),
@@ -123,7 +127,7 @@ def hyperparameter_tuning(param_grid, model_class, X_train, y_train, input_shape
 def add_dp_noise(gradients, sensitivity, epsilon):
     noise = np.random.laplace(0, sensitivity / epsilon, size=gradients.shape)
     return gradients + noise
-    
+
 # 联邦学习客户端类
 class FederatedLearningClient:
     def __init__(self, model, data, target, epochs=1, batch_size=32, dp_sensitivity=1.0, dp_epsilon=0.1):
@@ -207,9 +211,9 @@ with open('/content/FedHealthDP_Project/feature_columns.pkl', 'wb') as f:
 
 # 超参数范围
 param_grid = {
-    'lr': [0.001, 0.01, 0.1],
-    'batch_size': [16, 32, 64],
-    'epochs': [10, 20, 30]
+    'lr': [0.001, 0.01, 0.1, 0.5],
+    'batch_size': [16, 32, 64, 128],
+    'epochs': [10, 20, 30, 50]
 }
 
 # 加载数据并初始化客户端和服务器
