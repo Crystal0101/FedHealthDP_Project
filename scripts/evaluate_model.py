@@ -2,10 +2,12 @@ import pandas as pd
 import torch
 import torch.nn as nn
 from sklearn.preprocessing import StandardScaler, LabelEncoder, OneHotEncoder
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 import numpy as np
 from datetime import datetime
 import pickle
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 # 定义模型类
 class CancerModel(nn.Module):
@@ -13,13 +15,13 @@ class CancerModel(nn.Module):
         super(CancerModel, self).__init__()
         self.linear_relu_stack = nn.Sequential(
             nn.Linear(input_shape, 256),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Dropout(0.5),
             nn.Linear(256, 128),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Dropout(0.5),
             nn.Linear(128, 64),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(64, 1),
             nn.Sigmoid()
         )
@@ -70,6 +72,7 @@ def preprocess_data(file_path, y_file_path, y_column_name, all_feature_columns, 
 
     return torch.tensor(data.values, dtype=torch.float32), y
 
+
 # 评估模型的函数
 def evaluate_model(model_path, input_shape, X_test, y_test):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -87,6 +90,15 @@ def evaluate_model(model_path, input_shape, X_test, y_test):
     precision = precision_score(targets.cpu(), predictions.cpu(), zero_division=1)
     recall = recall_score(targets.cpu(), predictions.cpu(), zero_division=1)
     f1 = f1_score(targets.cpu(), predictions.cpu(), zero_division=1)
+    
+    # 打印混淆矩阵
+    cm = confusion_matrix(targets.cpu(), predictions.cpu())
+    plt.figure(figsize=(10, 7))
+    sns.heatmap(cm, annot=True, fmt="d")
+    plt.title('Confusion Matrix')
+    plt.xlabel('Predicted')
+    plt.ylabel('Actual')
+    plt.show()
 
     print(f"Accuracy: {accuracy:.4f}")
     print(f"Precision: {precision:.4f}")

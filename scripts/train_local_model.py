@@ -18,13 +18,13 @@ class CancerModel(nn.Module):
         super(CancerModel, self).__init__()
         self.linear_relu_stack = nn.Sequential(
             nn.Linear(input_shape, 256),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Dropout(0.5),
             nn.Linear(256, 128),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Dropout(0.5),
             nn.Linear(128, 64),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(64, 1),
             nn.Sigmoid()
         )
@@ -97,7 +97,7 @@ def hyperparameter_tuning(param_grid, model_class, X_train, y_train, input_shape
     
     for params in param_combinations:
         model = model_class(input_shape)
-        optimizer = optim.AdamW(model.parameters(), lr=params['lr'])
+        optimizer = optim.AdamW(model.parameters(), lr=params['lr'], weight_decay=1e-4)
         criterion = nn.BCELoss()
         dataset = TensorDataset(X_train, y_train)
         loader = DataLoader(dataset, batch_size=params['batch_size'], shuffle=True)
@@ -139,7 +139,7 @@ class FederatedLearningClient:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
         self.criterion = nn.BCELoss()
-        self.optimizer = optim.AdamW(self.model.parameters())
+        self.optimizer = optim.AdamW(self.model.parameters(), weight_decay=1e-4)
         self.dp_sensitivity = dp_sensitivity
         self.dp_epsilon = dp_epsilon
 
@@ -211,9 +211,9 @@ with open('/content/FedHealthDP_Project/feature_columns.pkl', 'wb') as f:
 
 # 超参数范围
 param_grid = {
-    'lr': [0.001, 0.01, 0.1, 0.5],
-    'batch_size': [16, 32, 64, 128],
-    'epochs': [10, 20, 30, 50]
+    'lr': [0.001, 0.01, 0.1],
+    'batch_size': [16, 32, 64],
+    'epochs': [10, 20, 30]
 }
 
 # 加载数据并初始化客户端和服务器
