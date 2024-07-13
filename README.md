@@ -1,86 +1,71 @@
 # FedHealthDP Project
 
-## 项目简介
+## Project Overview
 
-The FedHealthDP Project aims to train disease prediction models using federated learning with differential privacy, leveraging data from the MIMIC-III and Kaggle database.
+The FedHealthDP Project aims to train disease prediction models using federated learning with differential privacy. This approach leverages data from the MIMIC-III and Kaggle databases to create robust and privacy-preserving predictive models for cancer risk assessment.
 
-
-## 目录结构
+## Directory Structure
 
 ```plaintext
 FedHealthDP_Project/
 │
-├── README.md              # 项目简介和说明
-├── config.yaml            # 配置文件
-├── requirements.txt       # 依赖项列表
-├── main.py                # 项目入口文件
+├── README.md              # Project introduction and instructions
+├── config.yaml            # Configuration file
+├── requirements.txt       # List of dependencies
+├── main.py                # Project entry point
 │
-├── data/                  # 数据目录
-│   ├── kaggle/            # Kaggle数据集
-│   └── mimiciii/          # MIMIC-III数据集
+├── data/                  # Data directory
+│   ├── kaggle/            # Kaggle datasets
+│   └── mimiciii/          # MIMIC-III datasets
 │
-├── models/                # 模型目录
-│   ├── __init__.py        # 初始化文件
-│   ├── dp_optimizer.py    # 差分隐私优化器实现
-│   └── model.py           # 模型定义
+├── models/                # Models directory
+│   ├── __init__.py        # Initialization file
+│   ├── dp_optimizer.py    # Differential privacy optimizer implementation
+│   └── model.py           # Model definition
 │
-├── scripts/               # 脚本目录
-│   ├── preprocess.py      # 数据预处理脚本
-│   ├── train.py           # 训练脚本
-│   ├── federated_learning.py # 联邦学习实现脚本
-│   └── evaluate.py        # 模型评估脚本
+├── scripts/               # Scripts directory
+│   ├── preprocess.py      # Data preprocessing script
+│   ├── train.py           # Training script
+│   ├── federated_learning.py # Federated learning implementation script
+│   └── evaluate.py        # Model evaluation script
 │
-├── test/                  # 测试目录
-│   ├── test_evaluate.py   # 评估测试
-│   ├── test_federated.py  # 联邦学习测试
-│   ├── test_preprocess.py # 预处理测试
-│   └── test_train.py      # 训练测试
+├── test/                  # Test directory
+│   ├── test_evaluate.py   # Evaluation tests
+│   ├── test_federated.py  # Federated learning tests
+│   ├── test_preprocess.py # Preprocessing tests
+│   └── test_train.py      # Training tests
 │
-└── utils/                 # 工具目录
-    ├── __init__.py        # 初始化文件
-    ├── data_utils.py      # 数据处理工具
-    └── eval_utils.py      # 评估工具
-```
+└── utils/                 # Utilities directory
+    ├── __init__.py        # Initialization file
+    ├── data_utils.py      # Data processing utilities
+    └── eval_utils.py      # Evaluation utilities
 
-## 主要功能模块
 
-1. 数据预处理 (scripts/preprocess.py):
+## Main Functional Modules
 
-从数据源加载数据。
-处理缺失值、标准化和特征工程。
+1. **Data Preprocessing (scripts/preprocess.py)**:
+    - Load data from sources
+    - Handle missing values, normalization, and feature engineering
 
-2. 模型定义 (models/model.py):
+2. **Model Definition (models/model.py)**:
+    - Define deep learning model structure
+    - Support federated learning and differential privacy architecture
 
-定义深度学习模型结构。
-支持联邦学习和差分隐私的模型架构。
+3. **Differential Privacy Optimizer (models/dp_optimizer.py)**:
+    - Implement differential privacy optimization algorithms
+    - Ensure data privacy during training
 
-3. 差分隐私优化器 (models/dp_optimizer.py):
+4. **Federated Learning Implementation (scripts/federated_learning.py)**:
+    - Core logic for federated learning
+    - Manage model updates and aggregation across multiple clients
 
-实现差分隐私的优化算法。
-确保在训练过程中保护数据隐私。
+5. **Training Script (scripts/train.py)**:
+    - Train models, including local and federated training
+    - Support configurable training parameters
 
-4. 联邦学习实现 (scripts/federated_learning.py):
+6. **Evaluation Script (scripts/evaluate.py)**:
+    - Evaluate model performance
+    - Generate reports and visualization results
 
-实现联邦学习的核心逻辑。
-管理多个客户端的模型更新和聚合。
-
-5. 训练脚本 (scripts/train.py):
-
-训练模型，包括本地训练和联邦训练。
-支持配置化训练参数。
-
-6. 评估脚本 (scripts/evaluate.py):
-
-评估模型性能，生成报告和可视化结果。
-7. 工具函数 (utils/data_utils.py 和 utils/eval_utils.py):
-
-常用数据处理和评估函数，供其他模块调用。
-
-## 使用方法
-
-1. 安装依赖：
-
-```bash
-pip install -r requirements.txt
-```
-
+7. **Utility Functions (utils/data_utils.py and utils/eval_utils.py)**:
+    - Common data processing and evaluation functions for use by other modules
