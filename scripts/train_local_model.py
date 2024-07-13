@@ -8,7 +8,7 @@ import numpy as np
 from datetime import datetime
 import pickle
 from sklearn.model_selection import ParameterGrid
-from imblearn.over_sampling import SMOTE
+from imblearn.over_sampling import SMOTE, ADASYN
 import seaborn as sns
 import matplotlib.pyplot as plt
 
@@ -85,7 +85,7 @@ def visualize_data_distribution(data, title):
 
 # 样本平衡
 def balance_data(X, y):
-    smote = SMOTE(random_state=42)
+    smote = ADASYN(random_state=42)
     X_res, y_res = smote.fit_resample(X.numpy(), y.numpy())
     return torch.tensor(X_res, dtype=torch.float32), torch.tensor(y_res, dtype=torch.float32)
 
@@ -97,7 +97,7 @@ def hyperparameter_tuning(param_grid, model_class, X_train, y_train, input_shape
     
     for params in param_combinations:
         model = model_class(input_shape)
-        optimizer = optim.Adam(model.parameters(), lr=params['lr'])
+        optimizer = optim.AdamW(model.parameters(), lr=params['lr'])
         criterion = nn.BCELoss()
         dataset = TensorDataset(X_train, y_train)
         loader = DataLoader(dataset, batch_size=params['batch_size'], shuffle=True)
@@ -139,7 +139,7 @@ class FederatedLearningClient:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
         self.criterion = nn.BCELoss()
-        self.optimizer = optim.Adam(self.model.parameters())
+        self.optimizer = optim.AdamW(self.model.parameters())
         self.dp_sensitivity = dp_sensitivity
         self.dp_epsilon = dp_epsilon
 
