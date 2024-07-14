@@ -5,6 +5,18 @@ import seaborn as sns
 from sklearn.model_selection import train_test_split
 import os
 
+# 指定需要创建的目录列表
+directories = [
+    '/content/FedHealthDP_Project/data/cleaned',
+    '/content/FedHealthDP_Project/data/processed',
+    '/content/FedHealthDP_Project/data/split'
+]
+
+# 遍历目录列表，确保每个目录都被创建
+for directory in directories:
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
 # 读取数据集
 # 读取Kaggle数据集
 breast_cancer_data = pd.read_csv('/content/FedHealthDP_Project/data/kaggle/breast_cancer_data.csv')
