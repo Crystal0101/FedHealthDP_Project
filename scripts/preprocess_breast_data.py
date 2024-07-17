@@ -68,7 +68,7 @@ def main():
     ]
     create_directories(directories)
 
-    breast_cancer_data = read_data('/content/FedHealthDP_Project/FedHealthDP_Project/data/merge/breast_cancer.csv')
+    breast_cancer_data = read_data('/content/FedHealthDP_Project/FedHealthDP_Project/data/kaggle/breast_cancer_0.csv')
     if breast_cancer_data is not None:
         breast_cancer_data = preprocess_data(breast_cancer_data)
         eda_analysis(breast_cancer_data, breast_cancer_data.select_dtypes(include=[np.number]).columns, "breast", '/content/FedHealthDP_Project/FedHealthDP_Project/data/eda')
