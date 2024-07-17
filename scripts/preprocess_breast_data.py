@@ -1,96 +1,164 @@
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.model_selection import train_test_split
 import os
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.feature_selection import SelectKBest, f_classif
+from sklearn.model_selection import train_test_split
 import logging
-import pickle
 
-# 配置日志记录
+# 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # 创建必要的目录
-def create_directories(directories):
-    for directory in directories:
-        if not os.path.exists(directory):
-            os.makedirs(directory)
-            logging.info(f"Created directory: {directory}")
+os.makedirs('/content/FedHealthDP_Project/data/cleaned', exist_ok=True)
+os.makedirs('/content/FedHealthDP_Project/data/processed', exist_ok=True)
+os.makedirs('/content/FedHealthDP_Project/data/eda', exist_ok=True)
+os.makedirs('/content/FedHealthDP_Project/data/split', exist_ok=True)
 
-# 读取数据集
-def read_data(file_path, sep='\t'):
+def read_data(file_path):
     try:
-        data = pd.read_csv(file_path, sep=sep)
-        logging.info(f"Read data from {file_path}")
+        data = pd.read_csv(file_path)
+        logging.info(f"数据读取成功: {file_path}")
         return data
     except Exception as e:
-        logging.error(f"Error reading data from {file_path}: {e}")
-        return None
+        logging.error(f"数据读取失败: {e}")
+        raise
 
-# 数据预处理
-def preprocess_data(data):
-    data.dropna(inplace=True)
-    data.drop_duplicates(inplace=True)
-    numeric_columns = data.select_dtypes(include=[np.number]).columns
-    Q1 = data[numeric_columns].quantile(0.25)
-    Q3 = data[numeric_columns].quantile(0.75)
-    IQR = Q3 - Q1
-    data = data[~((data[numeric_columns] < (Q1 - 1.5 * IQR)) | (data[numeric_columns] > (Q3 + 1.5 * IQR))).any(axis=1)]
-    return data
+def clean_data(data):
+    try:
+        data = data.drop(columns=['id'])
+        data = data.dropna()  # 删除缺失值行，如果数据量大可以使用填充方法
+        logging.info("数据清洗成功")
+        return data
+    except Exception as e:
+        logging.error(f"数据清洗失败: {e}")
+        raise
 
-# EDA分析
-def eda_analysis(data, numeric_columns, title_prefix, output_dir):
-    logging.info(f"{title_prefix} 描述性统计:")
-    logging.info(data.describe())
-
-    plt.figure(figsize=(12, 10))
-    sns.heatmap(data[numeric_columns].corr(), annot=True, cmap='coolwarm')
-    plt.title(f'{title_prefix} 相关性矩阵')
-    plt.savefig(os.path.join(output_dir, f'{title_prefix}_correlation_matrix.png'), bbox_inches='tight')
-    plt.show()
-
-    for column in numeric_columns:
-        plt.rcParams['font.sans-serif'] = ['SimHei']  # 使用黑体
-        plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
-        plt.figure(figsize=(10, 6))
-        sns.histplot(data[column], kde=True)
-        plt.title(f'{title_prefix} {column} 分布')
-        plt.savefig(os.path.join(output_dir, f'{title_prefix}_{column}_distribution.png'), bbox_inches='tight')
+def eda_analysis(data):
+    try:
+        # 描述性统计
+        logging.info("数据描述性统计:")
+        logging.info(data.describe())
+        
+        # 相关矩阵热力图
+        numeric_columns = data.select_dtypes(include=[np.number]).columns
+        corr_matrix = data[numeric_columns].corr()
+        sns.heatmap(corr_matrix, annot=True, cmap='coolwarm')
+        plt.title('Correlation Matrix Heatmap')
+        plt.savefig('/content/FedHealthDP_Project/data/eda/breast_correlation_heatmap.png')
         plt.show()
+        logging.info("EDA分析完成")
+    except Exception as e:
+        logging.error(f"EDA分析失败: {e}")
+        raise
 
-# 主函数
+def feature_engineering(data):
+    try:
+        # 标签编码
+        le = LabelEncoder()
+        data['diagnosis'] = le.fit_transform(data['diagnosis'])
+        
+        # 标准化数值特征
+        scaler = StandardScaler()
+        numeric_columns = data.select_dtypes(include=[np.number]).columns
+        data[numeric_columns] = scaler.fit_transform(data[numeric_columns])
+        
+        logging.info("特征工程完成")
+        return data
+    except Exception as e:
+        logging.error(f"特征工程失败: {e}")
+        raise
+
+def feature_selection(data, target_column='diagnosis', k=10):
+    try:
+        X = data.drop(columns=[target_column])
+        y = data[target_column]
+        
+        # 选择k个最佳特征
+        selector = SelectKBest(score_func=f_classif, k=k)
+        X_new = selector.fit_transform(X, y)
+        
+        # 保留选择的特征列名
+        selected_features = X.columns[selector.get_support()]
+        selected_features.to_series().to_csv('/content/FedHealthDP_Project/data/split/breast_features.csv', index=False)
+        X = pd.DataFrame(X_new, columns=selected_features)
+        
+        # 重新添加目标列
+        data = pd.concat([X, y.reset_index(drop=True)], axis=1)
+        
+        logging.info("特征选择完成")
+        return data, selected_features
+    except Exception as e:
+        logging.error(f"特征选择失败: {e}")
+        raise
+
+def visualize_data(data):
+    try:
+        sns.pairplot(data, hue='diagnosis')
+        plt.savefig('/content/FedHealthDP_Project/data/eda/breast_pairplot.png')
+        plt.show()
+        logging.info("数据可视化完成")
+    except Exception as e:
+        logging.error(f"数据可视化失败: {e}")
+        raise
+
+def split_data(data, selected_features, target_column='diagnosis', test_size=0.2, random_state=42):
+    try:
+        X = data[selected_features]
+        y = data[target_column]
+        
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state)
+        
+        # 保存分割后的数据
+        X_train.to_csv('/content/FedHealthDP_Project/data/split/breast_cancer_X_train.csv', index=False)
+        X_test.to_csv('/content/FedHealthDP_Project/data/split/breast_cancer_X_test.csv', index=False)
+        y_train.to_csv('/content/FedHealthDP_Project/data/split/breast_cancer_y_train.csv', index=False, header=True)
+        y_test.to_csv('/content/FedHealthDP_Project/data/split/breast_cancer_y_test.csv', index=False, header=True)
+        
+        logging.info("数据分割完成")
+        return X_train, X_test, y_train, y_test
+    except Exception as e:
+        logging.error(f"数据分割失败: {e}")
+        raise
+
 def main():
-    directories = [
-        '/content/FedHealthDP_Project/FedHealthDP_Project/data/cleaned',
-        '/content/FedHealthDP_Project/FedHealthDP_Project/data/processed',
-        '/content/FedHealthDP_Project/FedHealthDP_Project/data/split',
-        '/content/FedHealthDP_Project/FedHealthDP_Project/data/eda'
-    ]
-    create_directories(directories)
-
-    breast_cancer_data = read_data('/content/FedHealthDP_Project/FedHealthDP_Project/data/kaggle/breast_cancer_0.csv')
-    if breast_cancer_data is not None:
-        breast_cancer_data = preprocess_data(breast_cancer_data)
-        eda_analysis(breast_cancer_data, breast_cancer_data.select_dtypes(include=[np.number]).columns, "breast", '/content/FedHealthDP_Project/FedHealthDP_Project/data/eda')
-        breast_cancer_data.to_csv('/content/FedHealthDP_Project/FedHealthDP_Project/data/cleaned/breast_cancer_data_cleaned.csv', index=False, sep='\t')
-
-        breast_features = ['mean radius', 'mean texture', 'mean perimeter', 'mean area', 'mean smoothness', 'mean compactness', 'mean concavity', 'mean concave points', 'mean symmetry', 'mean fractal dimension']
-        X_breast = breast_cancer_data[breast_features]
-        y_breast = breast_cancer_data['target']
-
-        # 保存特征列列表
-        with open('/content/FedHealthDP_Project/FedHealthDP_Project/data/processed/breast_cancer_feature_columns.pkl', 'wb') as f:
-            pickle.dump(breast_features, f)
-
-        X_breast.to_csv('/content/FedHealthDP_Project/FedHealthDP_Project/data/processed/breast_cancer_features.csv', index=False)
-        y_breast.to_csv('/content/FedHealthDP_Project/FedHealthDP_Project/data/processed/breast_cancer_labels.csv', index=False)
-
-        X_breast_train, X_breast_test, y_breast_train, y_breast_test = train_test_split(X_breast, y_breast, test_size=0.2, random_state=42)
-
-        X_breast_train.to_csv('/content/FedHealthDP_Project/FedHealthDP_Project/data/split/breast_cancer_X_train.csv', index=False)
-        X_breast_test.to_csv('/content/FedHealthDP_Project/FedHealthDP_Project/data/split/breast_cancer_X_test.csv', index=False)
-        y_breast_train.to_csv('/content/FedHealthDP_Project/FedHealthDP_Project/data/split/breast_cancer_y_train.csv', index=False)
-        y_breast_test.to_csv('/content/FedHealthDP_Project/FedHealthDP_Project/data/split/breast_cancer_y_test.csv', index=False)
+    try:
+        # 数据读取
+        data = read_data('/content/FedHealthDP_Project/data/kaggle/breast_cancer_0.csv')
+        
+        # 数据清洗
+        data = clean_data(data)
+        
+        # 暂存目标列
+        y = data['diagnosis'].copy()
+        
+        # EDA分析
+        eda_analysis(data)
+        
+        # 特征工程
+        data = feature_engineering(data)
+        
+        # 恢复目标列
+        data['diagnosis'] = y
+        
+        # 特征选择
+        data, selected_features = feature_selection(data)
+        
+        # 数据可视化
+        visualize_data(data)
+        
+        # 数据分割
+        X_train, X_test, y_train, y_test = split_data(data, selected_features)
+        
+        # 保存处理后的数据
+        processed_data_path = '/content/FedHealthDP_Project/data/processed/breast_cleaned_data.csv'
+        data.to_csv(processed_data_path, index=False)
+        
+        logging.info("数据处理和保存完成")
+    except Exception as e:
+        logging.error(f"数据处理流程失败: {e}")
 
 if __name__ == "__main__":
     main()

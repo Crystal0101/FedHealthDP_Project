@@ -41,6 +41,7 @@ def preprocess_data(file_path, y_file_path, y_column_name, all_feature_columns, 
     y_data = pd.read_csv(y_file_path)
 
     print("Data columns:", data.columns)
+    print("Target columns:", y_data.columns)
     print("Feature columns:", all_feature_columns)
 
     if categorical_columns:
@@ -56,7 +57,8 @@ def preprocess_data(file_path, y_file_path, y_column_name, all_feature_columns, 
     if y_column_name not in y_data.columns:
         raise ValueError(f"Column {y_column_name} not found in {y_file_path}")
 
-    y = y_data[y_column_name].apply(lambda x: 1 if x in ['YES', 1] else 0).values
+    # 确保目标列中的所有正类值被正确映射为 1
+    y = y_data[y_column_name].apply(lambda x: 1 if x in ['M', 'YES', 1] else 0).values
     y = torch.tensor(y.astype(np.float32), dtype=torch.float32)
 
     existing_features = [col for col in all_feature_columns if col in data.columns]
@@ -244,20 +246,23 @@ def federated_training(clients, server, rounds):
 # 加载数据并初始化客户端和服务器
 try:
     # 乳腺癌数据
-    feature_columns = ['mean radius', 'mean texture', 'mean perimeter', 'mean area', 
-                       'mean smoothness', 'mean compactness', 'mean concavity', 
-                       'mean concave points', 'mean symmetry', 'mean fractal dimension']
+    feature_columns = ['radius_mean', 'perimeter_mean', 'area_mean', 'concavity_mean',
+                       'concave points_mean', 'radius_worst', 'perimeter_worst', 
+                       'area_worst', 'concavity_worst', 'concave points_worst']
     
     X_breast_train, y_breast_train = preprocess_data(
-        '/content/FedHealthDP_Project/FedHealthDP_Project/data/split/breast_cancer_X_train.csv',
-        '/content/FedHealthDP_Project/FedHealthDP_Project/data/split/breast_cancer_y_train.csv',
-        'target', all_feature_columns=feature_columns)
-    
+        '/content/FedHealthDP_Project/data/split/breast_cancer_X_train.csv',
+        '/content/FedHealthDP_Project/data/split/breast_cancer_y_train.csv',
+        'diagnosis', all_feature_columns=feature_columns)
+
+    # 打印目标变量的分布
+    print("Target variable distribution after preprocessing:", torch.unique(y_breast_train, return_counts=True))
+
     if X_breast_train.shape[1] == 0:
         raise ValueError("No features selected for breast cancer data.")
-    
+
     X_breast_train = select_features(X_breast_train, y_breast_train, num_features=10)
-    
+
     if len(torch.unique(y_breast_train)) > 1:
         X_breast_train, y_breast_train = balance_data(X_breast_train, y_breast_train, method='SMOTE')
         breast_models = [DeeperNN(X_breast_train.shape[1])]
@@ -279,7 +284,7 @@ try:
     federated_training(clients, server, rounds=10)
 
     # 保存全局模型
-    torch.save(global_model.state_dict(), '/content/FedHealthDP_Project/FedHealthDP_Project/models/global_model.pth')
+    torch.save(global_model.state_dict(), '/content/FedHealthDP_Project/models/global_model.pth')
 
 except Exception as e:
     print(f"An error occurred: {e}")

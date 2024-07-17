@@ -50,7 +50,7 @@ def preprocess_data(file_path, y_file_path, feature_columns, y_column_name, cate
     if y_column_name not in y_data.columns:
         raise ValueError(f"Column {y_column_name} not found in {y_file_path}")
 
-    y = y_data[y_column_name].apply(lambda x: 1 if x in ['YES', 1] else 0).values
+    y = y_data[y_column_name].apply(lambda x: 1 if x in ['M', 'YES', 1] else 0).values
     y = torch.tensor(y.astype(np.float32), dtype=torch.float32)
 
     existing_features = [col for col in feature_columns if col in data.columns]
@@ -164,19 +164,19 @@ def cross_validate_model(X, y, num_folds=5):
     print(f"ROC AUC: {fold_results[:,4].mean():.4f} ± {fold_results[:,4].std():.4f}")
 
 # 加载特征列
-with open('/content/FedHealthDP_Project/FedHealthDP_Project/data/processed/breast_cancer_feature_columns.pkl', 'rb') as f:
-    breast_feature_columns = pickle.load(f)
+with open('/content/FedHealthDP_Project/data/split/breast_features.csv', 'r') as f:
+    breast_feature_columns = f.read().splitlines()
 
 # 加载模型
-model_path = '/content/FedHealthDP_Project/FedHealthDP_Project/models/global_model.pth'
+model_path = '/content/FedHealthDP_Project/models/global_model.pth'
 
 try:
     # 加载乳腺癌测试数据
     X_breast_test, y_breast_test = preprocess_data(
-        '/content/FedHealthDP_Project/FedHealthDP_Project/data/split/breast_cancer_X_test.csv',
-        '/content/FedHealthDP_Project/FedHealthDP_Project/data/split/breast_cancer_y_test.csv',
+        '/content/FedHealthDP_Project/data/split/breast_cancer_X_test.csv',
+        '/content/FedHealthDP_Project/data/split/breast_cancer_y_test.csv',
         breast_feature_columns,
-        'target'
+        'diagnosis'
     )
 
     # 加载训练好的模型
@@ -192,10 +192,10 @@ try:
     # 加载乳腺癌训练数据并进行交叉验证
     print("Cross-validating Breast Cancer Model")
     X_breast_train, y_breast_train = preprocess_data(
-        '/content/FedHealthDP_Project/FedHealthDP_Project/data/split/breast_cancer_X_train.csv',
-        '/content/FedHealthDP_Project/FedHealthDP_Project/data/split/breast_cancer_y_train.csv',
+        '/content/FedHealthDP_Project/data/split/breast_cancer_X_train.csv',
+        '/content/FedHealthDP_Project/data/split/breast_cancer_y_train.csv',
         breast_feature_columns,
-        'target'
+        'diagnosis'
     )
     cross_validate_model(X_breast_train, y_breast_train)
 
