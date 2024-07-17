@@ -69,3 +69,18 @@ FedHealthDP_Project/
     ├── data_utils.py      # Data processing utilities
     └── eval_utils.py      # Evaluation utilities
 
+## Datasets 
+https://data.world/deviramanan2016/nki-breast-cancer-data/workspace/file?filename=NKI_cleaned.csv
+/data/nci/breast_cancer.csv
+
+https://www.kaggle.com/datasets/yasserh/breast-cancer-dataset
+/data/kaggle/breast_cancer_0.csv
+
+https://www.kaggle.com/datasets/reihanenamdari/breast-cancer
+/data/kaggle/breast_cancer_1.csv
+
+https://www.kaggle.com/datasets/raghadalharbi/breast-cancer-gene-expression-profiles-metabric
+/data/kaggle/breast_cancer_2.csv
+
+
+
