@@ -1,17 +1,15 @@
+import os
 import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from sklearn.preprocessing import StandardScaler, LabelEncoder, OneHotEncoder
 from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
-from datetime import datetime
-import pickle
 from sklearn.model_selection import ParameterGrid
 from imblearn.over_sampling import ADASYN
-import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, precision_recall_curve
+import pickle
 
 # 定义更复杂的模型
 class DeeperNN(nn.Module):
@@ -34,60 +32,55 @@ class DeeperNN(nn.Module):
     def forward(self, x):
         return self.layers(x)
 
-# 数据预处理函数
-def preprocess_data(file_path, y_file_path, y_column_name, all_feature_columns, categorical_columns=None, date_columns=None):
-    data = pd.read_csv(file_path)
-    y_data = pd.read_csv(y_file_path)
-
-    if categorical_columns:
-        for col in categorical_columns:
-            if col in data.columns:
-                le = LabelEncoder()
-                data[col] = le.fit_transform(data[col])
-                ohe = OneHotEncoder(sparse_output=False)
-                encoded_features = ohe.fit_transform(data[[col]])
-                encoded_features_df = pd.DataFrame(encoded_features, columns=[f"{col}_{int(i)}" for i in range(encoded_features.shape[1])])
-                data = pd.concat([data, encoded_features_df], axis=1).drop(col, axis=1)
-
-    if date_columns:
-        for col in date_columns:
-            if col in data.columns:
-                data[col] = pd.to_datetime(data[col]).apply(lambda x: (datetime.now() - x).days / 365.25)
-
-    scaler = StandardScaler()
-    numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
-    data[numeric_cols] = scaler.fit_transform(data[numeric_cols])
-
-    if y_column_name not in y_data.columns:
-        raise ValueError(f"Column {y_column_name} not found in {y_file_path}")
-
-    y = torch.tensor(y_data[y_column_name].apply(lambda x: 1 if x == 'M' or x == 'YES' else 0).values, dtype=torch.float32)
+# 数据加载函数
+def load_data(file_path, y_file_path):
+    X = pd.read_csv(file_path)
+    y = pd.read_csv(y_file_path)
     
-    existing_features = [col for col in all_feature_columns if col in data.columns]
-    missing_features = [col for col in all_feature_columns if col not in data.columns]
+    # 打印数据类型和头几行数据
+    print("Data types of X:")
+    print(X.dtypes)
+    print("First few rows of X:")
+    print(X.head())
     
-    for col in missing_features:
-        data[col] = 0
-
-    data = data[all_feature_columns]
-
-    print(f"Data loaded from {file_path} with {data.shape[1]} features.")
-
-    return torch.tensor(data.values, dtype=torch.float32), y
+    # 打印数据类型和头几行标签数据
+    print("Data types of y:")
+    print(y.dtypes)
+    print("First few rows of y:")
+    print(y.head())
+    
+    # 转换数据为数值类型，处理任何非数值列
+    X = X.apply(pd.to_numeric, errors='coerce').fillna(0)
+    
+    # 检查标签数据是否为字符串类型
+    if y.dtypes[0] == 'object':
+        y = y.applymap(lambda x: 1 if x.lower() == 'yes' else 0)
+    
+    y = y.squeeze()  # 确保 y 是一维数组
+    y = torch.tensor(y.values.astype(np.float32), dtype=torch.float32)
+    
+    print(f"Data loaded from {file_path} with {X.shape[1]} features.")
+    return torch.tensor(X.values.astype(np.float32)), y
 
 # 数据可视化
 def visualize_data_distribution(data, title):
     plt.figure(figsize=(12, 6))
-    sns.boxplot(data=data)
+    plt.boxplot(data)
     plt.title(title)
     plt.xticks(rotation=90)
     plt.show()
 
 # 样本平衡
 def balance_data(X, y):
-    smote = ADASYN(random_state=42)
-    X_res, y_res = smote.fit_resample(X.numpy(), y.numpy())
-    return torch.tensor(X_res, dtype=torch.float32), torch.tensor(y_res, dtype=torch.float32)
+    unique, counts = np.unique(y.numpy(), return_counts=True)
+    print(f"Class distribution before balancing: {dict(zip(unique, counts))}")
+    if len(unique) > 1:
+        smote = ADASYN(random_state=42)
+        X_res, y_res = smote.fit_resample(X.numpy(), y.numpy())
+        return torch.tensor(X_res, dtype=torch.float32), torch.tensor(y_res, dtype=torch.float32)
+    else:
+        print("Skipping balancing as there is only one class in target variable.")
+        return X, y
 
 # 超参数调优函数
 def hyperparameter_tuning(param_grid, model_class, X_train, y_train, input_shape):
@@ -236,19 +229,11 @@ def federated_training(clients, server, rounds):
         else:
             print(f'Round {round + 1} skipped due to insufficient class variety in targets.')
 
-# 定义统一特征列
-feature_columns = ['radius_mean', 'texture_mean', 'perimeter_mean', 'area_mean', 
-                   'smoothness_mean', 'compactness_mean', 'concavity_mean', 
-                   'concave points_mean', 'symmetry_mean', 'fractal_dimension_mean',
-                   'AGE', 'SMOKING', 'YELLOW_FINGERS', 'ANXIETY', 
-                   'PEER_PRESSURE', 'CHRONIC DISEASE', 'FATIGUE', 
-                   'ALLERGY', 'WHEEZING', 'ALCOHOL CONSUMING', 
-                   'COUGHING', 'SHORTNESS OF BREATH', 'SWALLOWING DIFFICULTY', 
-                   'CHEST PAIN']
-
-# 保存特征列
-with open('/content/FedHealthDP_Project/feature_columns.pkl', 'wb') as f:
-    pickle.dump(feature_columns, f)
+# 加载特征列
+with open('/content/FedHealthDP_Project/FedHealthDP_Project/data/processed/breast_cancer_feature_columns.pkl', 'rb') as f:
+    breast_feature_columns = pickle.load(f)
+with open('/content/FedHealthDP_Project/FedHealthDP_Project/data/processed/lung_cancer_feature_columns.pkl', 'rb') as f:
+    lung_feature_columns = pickle.load(f)
 
 # 超参数范围
 param_grid = {
@@ -260,13 +245,13 @@ param_grid = {
 # 加载数据并初始化客户端和服务器
 try:
     # 乳腺癌数据
-    X_breast_train, y_breast_train = preprocess_data(
-        '/content/FedHealthDP_Project/data/split/breast_cancer_X_train.csv',
-        '/content/FedHealthDP_Project/data/split/breast_cancer_y_train.csv',
-        'diagnosis', all_feature_columns=feature_columns)
+    X_breast_train, y_breast_train = load_data(
+        '/content/FedHealthDP_Project/FedHealthDP_Project/data/split/breast_cancer_X_train.csv',
+        '/content/FedHealthDP_Project/FedHealthDP_Project/data/split/breast_cancer_y_train.csv'
+    )
     if len(torch.unique(y_breast_train)) > 1:
         X_breast_train, y_breast_train = balance_data(X_breast_train, y_breast_train)
-        visualize_data_distribution(pd.DataFrame(X_breast_train.numpy()), 'Breast Cancer Data Distribution')
+        visualize_data_distribution(pd.DataFrame(X_breast_train.numpy(), columns=breast_feature_columns), 'Breast Cancer Data Distribution')
         breast_models = [DeeperNN(X_breast_train.shape[1])]
         breast_clients = []
         for model in breast_models:
@@ -276,13 +261,13 @@ try:
         breast_clients = []
 
     # 肺癌数据
-    X_lung_train, y_lung_train = preprocess_data(
-        '/content/FedHealthDP_Project/data/split/lung_cancer_X_train.csv',
-        '/content/FedHealthDP_Project/data/split/lung_cancer_y_train.csv',
-        'LUNG_CANCER', all_feature_columns=feature_columns)
+    X_lung_train, y_lung_train = load_data(
+        '/content/FedHealthDP_Project/FedHealthDP_Project/data/split/lung_cancer_X_train.csv',
+        '/content/FedHealthDP_Project/FedHealthDP_Project/data/split/lung_cancer_y_train.csv'
+    )
     if len(torch.unique(y_lung_train)) > 1:
         X_lung_train, y_lung_train = balance_data(X_lung_train, y_lung_train)
-        visualize_data_distribution(pd.DataFrame(X_lung_train.numpy()), 'Lung Cancer Data Distribution')
+        visualize_data_distribution(pd.DataFrame(X_lung_train.numpy(), columns=lung_feature_columns), 'Lung Cancer Data Distribution')
         lung_models = [DeeperNN(X_lung_train.shape[1])]
         lung_clients = []
         for model in lung_models:
@@ -291,34 +276,18 @@ try:
     else:
         lung_clients = []
 
-    # 前列腺癌数据
-    X_prostate_train, y_prostate_train = preprocess_data(
-        '/content/FedHealthDP_Project/data/split/prostate_cancer_X_train.csv',
-        '/content/FedHealthDP_Project/data/split/prostate_cancer_y_train.csv',
-        'diagnosis_result', all_feature_columns=feature_columns)
-    if len(torch.unique(y_prostate_train)) > 1:
-        X_prostate_train, y_prostate_train = balance_data(X_prostate_train, y_prostate_train)
-        visualize_data_distribution(pd.DataFrame(X_prostate_train.numpy()), 'Prostate Cancer Data Distribution')
-        prostate_models = [DeeperNN(X_prostate_train.shape[1])]
-        prostate_clients = []
-        for model in prostate_models:
-            best_params, best_score = hyperparameter_tuning(param_grid, type(model), X_prostate_train, y_prostate_train, X_prostate_train.shape[1])
-            prostate_clients.append(FederatedLearningClient(model, X_prostate_train, y_prostate_train, epochs=best_params['epochs'], batch_size=best_params['batch_size']))
-    else:
-        prostate_clients = []
-
     # 初始化服务器
     global_model = DeeperNN(X_breast_train.shape[1])
     server = FederatedLearningServer(global_model, dp_epsilon=1.0, dp_sensitivity=0.1)
 
     # 创建客户端列表，去除 None 的客户端
-    clients = breast_clients + lung_clients + prostate_clients
+    clients = breast_clients + lung_clients
 
     # 运行联邦学习训练
     federated_training(clients, server, rounds=10)
 
     # 保存全局模型
-    torch.save(global_model.state_dict(), '/content/FedHealthDP_Project/models/global_model.pth')
+    torch.save(global_model.state_dict(), '/content/FedHealthDP_Project/FedHealthDP_Project/models/global_model.pth')
 
 except Exception as e:
     print(f"An error occurred: {e}")
