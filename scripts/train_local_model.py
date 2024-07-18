@@ -8,14 +8,14 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from imblearn.over_sampling import SMOTE, ADASYN
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.feature_selection import mutual_info_classif, SelectKBest, f_classif
+from sklearn.feature_selection import mutual_info_classif
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, precision_recall_curve, confusion_matrix
+from sklearn.svm import SVC
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 import seaborn as sns
 import logging
-from sklearn.feature_selection import SelectFromModel
-from sklearn.linear_model import LassoCV
-from sklearn.pipeline import Pipeline
 
 # 初始化日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -139,20 +139,6 @@ def select_features(X, y, num_features=10):
         return X  # 如果没有特征被选择，返回原始特征
 
     return X[:, selected_features]
-    
-# 调优差分隐私参数
-def tune_dp_parameters(X, y, param_grid, cv=3):
-    model = RandomForestClassifier()
-    grid_search = GridSearchCV(estimator=model, param_grid=param_grid, cv=cv, scoring='accuracy')
-    grid_search.fit(X, y)
-    best_params = grid_search.best_params_
-    return best_params
-
-# 动态调整差分隐私噪声
-def add_dp_noise(gradients, sensitivity, epsilon, dynamic_factor=1.0):
-    noise_scale = sensitivity / (epsilon * dynamic_factor)
-    noise = np.random.laplace(0, noise_scale, size=gradients.shape)
-    return gradients + noise
 
 # 计算模型性能指标
 def compute_metrics(outputs, targets, threshold=0.5):
@@ -171,6 +157,12 @@ def find_best_threshold(outputs, targets):
     best_threshold = thresholds[np.argmax(f1_scores)]
     return best_threshold
 
+# 动态调整差分隐私噪声
+def add_dp_noise(gradients, sensitivity, epsilon, dynamic_factor=1.0):
+    noise_scale = sensitivity / (epsilon * dynamic_factor)
+    noise = np.random.laplace(0, noise_scale, size=gradients.shape)
+    return gradients + noise
+    
 # 联邦学习客户端类
 class FederatedLearningClient:
     def __init__(self, model, data, target, epochs=1, batch_size=32, dp_sensitivity=0.1, dp_epsilon=1.0, dp_dynamic_factor=1.0, val_split=0.2):
@@ -295,6 +287,25 @@ class FederatedLearningClient:
             outputs = self.model(self.data.to(self.device)).cpu()
             metrics = compute_metrics(outputs, self.target, threshold=self.best_threshold)
         return metrics
+
+# 经典算法比较实验
+def compare_classical_algorithms(X_train, y_train, X_test, y_test):
+    classifiers = {
+        'RandomForest': RandomForestClassifier(random_state=42),
+        'SVM': SVC(probability=True, random_state=42),
+        'DecisionTree': DecisionTreeClassifier(random_state=42)
+    }
+
+    results = {}
+
+    for name, clf in classifiers.items():
+        clf.fit(X_train, y_train)
+        y_pred = clf.predict_proba(X_test)[:, 1]
+        metrics = compute_metrics(torch.tensor(y_pred), torch.tensor(y_test))
+        results[name] = metrics
+        logging.info(f"{name} - Accuracy: {metrics[0]:.4f}, Precision: {metrics[1]:.4f}, Recall: {metrics[2]:.4f}, F1 Score: {metrics[3]:.4f}, ROC AUC: {metrics[4]:.4f}")
+
+    return results
 
 # 联邦学习服务器类
 class FederatedLearningServer:
@@ -485,6 +496,11 @@ def main():
 
         # 保存全局模型
         torch.save(global_model.state_dict(), '/content/FedHealthDP_Project/models/global_model.pth')
+
+        # 经典算法比较实验
+        X_breast_train, X_breast_test, y_breast_train, y_breast_test = train_test_split(X_breast_train, y_breast_train, test_size=0.2, random_state=42)
+        classical_results = compare_classical_algorithms(X_breast_train.numpy(), y_breast_train.numpy(), X_breast_test.numpy(), y_breast_test.numpy())
+        logging.info(f"Classical algorithms comparison results: {classical_results}")
 
     except Exception as e:
         logging.error(f"An error occurred: {e}")

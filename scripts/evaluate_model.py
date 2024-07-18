@@ -6,9 +6,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, precision_recall_curve, confusion_matrix, classification_report, roc_curve, auc, matthews_corrcoef, cohen_kappa_score
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.tree import DecisionTreeClassifier
 import logging
 
 # 初始化日志
@@ -230,6 +232,35 @@ def cross_validate_model(X, y, feature_names, num_folds=5, output_dir='results')
     plt.savefig(os.path.join(output_dir, 'learning_curves.png'))
     plt.close()
 
+# 评估经典机器学习模型
+def evaluate_classical_models(X_train, y_train, X_test, y_test, output_dir='results'):
+    models = {
+        'RandomForest': RandomForestClassifier(random_state=42),
+        'SVM': SVC(probability=True, random_state=42),
+        'DecisionTree': DecisionTreeClassifier(random_state=42)
+    }
+    
+    results = {}
+    
+    for name, model in models.items():
+        model.fit(X_train, y_train)
+        predictions = model.predict(X_test)
+        probas = model.predict_proba(X_test)[:, 1] if hasattr(model, 'predict_proba') else model.decision_function(X_test)
+        
+        accuracy = accuracy_score(y_test, predictions)
+        precision = precision_score(y_test, predictions, zero_division=0)
+        recall = recall_score(y_test, predictions, zero_division=0)
+        f1 = f1_score(y_test, predictions, zero_division=0)
+        roc_auc = roc_auc_score(y_test, probas)
+        
+        results[name] = (accuracy, precision, recall, f1, roc_auc)
+        
+        logging.info(f"{name} - Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}, ROC AUC: {roc_auc:.4f}")
+
+    logging.info(f"Classical algorithms comparison results: {results}")
+
+    return results
+
 # 加载特征列
 with open('/content/FedHealthDP_Project/data/split/breast_features.csv', 'r') as f:
     breast_feature_columns = f.read().splitlines()
@@ -269,6 +300,10 @@ try:
     )
     X_breast_train, selected_importances, selected_feature_names = select_features(X_breast_train, y_breast_train, feature_names, num_features=10)
     cross_validate_model(X_breast_train, y_breast_train, feature_names, output_dir='breast_cancer_results')
+
+    # 评估经典机器学习模型
+    logging.info("Evaluating Classical Models")
+    evaluate_classical_models(X_breast_train.numpy(), y_breast_train.numpy(), X_breast_test.numpy(), y_breast_test.numpy(), output_dir='breast_cancer_results')
 
     # 绘制特征重要性图并保存到本地文件
     plt.figure()
