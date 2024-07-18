@@ -12,10 +12,14 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # 创建必要的目录
-os.makedirs('/content/FedHealthDP_Project/data/cleaned', exist_ok=True)
-os.makedirs('/content/FedHealthDP_Project/data/processed', exist_ok=True)
-os.makedirs('/content/FedHealthDP_Project/data/eda', exist_ok=True)
-os.makedirs('/content/FedHealthDP_Project/data/split', exist_ok=True)
+output_dirs = [
+    '/content/FedHealthDP_Project/data/cleaned',
+    '/content/FedHealthDP_Project/data/processed',
+    '/content/FedHealthDP_Project/data/eda',
+    '/content/FedHealthDP_Project/data/split'
+]
+for dir_path in output_dirs:
+    os.makedirs(dir_path, exist_ok=True)
 
 def read_data(file_path):
     try:
@@ -41,14 +45,42 @@ def eda_analysis(data):
         # 描述性统计
         logging.info("数据描述性统计:")
         logging.info(data.describe())
-        
+
+        # 绘制目标变量的分布
+        plt.figure(figsize=(10, 6))
+        sns.countplot(data['diagnosis'])
+        plt.title('Diagnosis Distribution', fontsize=16)
+        plt.xlabel('Diagnosis', fontsize=14)
+        plt.ylabel('Count', fontsize=14)
+        plt.savefig('/content/FedHealthDP_Project/data/eda/diagnosis_distribution.png')
+        plt.close()
+
+        # 绘制数值特征的直方图
+        data.hist(bins=20, figsize=(20, 15))
+        plt.tight_layout()
+        plt.savefig('/content/FedHealthDP_Project/data/eda/numerical_features_histogram.png')
+        plt.close()
+
+        # 绘制数值特征的箱线图
+        plt.figure(figsize=(20, 15))
+        sns.boxplot(data=data.select_dtypes(include=[np.number]))
+        plt.title('Numerical Features Boxplot', fontsize=16)
+        plt.xticks(rotation=90, fontsize=12)
+        plt.tight_layout()
+        plt.savefig('/content/FedHealthDP_Project/data/eda/numerical_features_boxplot.png')
+        plt.close()
+
         # 相关矩阵热力图
         numeric_columns = data.select_dtypes(include=[np.number]).columns
         corr_matrix = data[numeric_columns].corr()
-        sns.heatmap(corr_matrix, annot=True, cmap='coolwarm')
-        plt.title('Correlation Matrix Heatmap')
+        plt.figure(figsize=(16, 12))
+        sns.heatmap(corr_matrix, annot=True, fmt=".2f", cmap='coolwarm', linewidths=.5)
+        plt.xticks(rotation=45, ha='right', fontsize=12)
+        plt.yticks(rotation=0, fontsize=12)
+        plt.title('Correlation Matrix Heatmap', fontsize=16)
+        plt.tight_layout()
         plt.savefig('/content/FedHealthDP_Project/data/eda/breast_correlation_heatmap.png')
-        plt.show()
+        plt.close()
         logging.info("EDA分析完成")
     except Exception as e:
         logging.error(f"EDA分析失败: {e}")
@@ -82,7 +114,7 @@ def feature_selection(data, target_column='diagnosis', k=10):
         
         # 保留选择的特征列名
         selected_features = X.columns[selector.get_support()]
-        selected_features.to_series().to_csv('/content/FedHealthDP_Project/data/split/breast_features.csv', index=False)
+        pd.Series(selected_features).to_csv('/content/FedHealthDP_Project/data/split/breast_features.csv', index=False)
         X = pd.DataFrame(X_new, columns=selected_features)
         
         # 重新添加目标列
@@ -96,9 +128,10 @@ def feature_selection(data, target_column='diagnosis', k=10):
 
 def visualize_data(data):
     try:
-        sns.pairplot(data, hue='diagnosis')
+        plt.figure(figsize=(20, 20))
+        sns.pairplot(data, hue='diagnosis', height=2.5)
         plt.savefig('/content/FedHealthDP_Project/data/eda/breast_pairplot.png')
-        plt.show()
+        plt.close()
         logging.info("数据可视化完成")
     except Exception as e:
         logging.error(f"数据可视化失败: {e}")

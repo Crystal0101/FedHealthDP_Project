@@ -3,16 +3,22 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, random_split
 import numpy as np
-import pickle
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from imblearn.over_sampling import SMOTE, ADASYN
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.feature_selection import mutual_info_classif
-from sklearn.model_selection import RandomizedSearchCV
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, precision_recall_curve, confusion_matrix, classification_report, roc_curve, auc
-from scipy.stats import uniform, randint
+from sklearn.feature_selection import mutual_info_classif, SelectKBest, f_classif
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, precision_recall_curve, confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns
+import logging
+from sklearn.feature_selection import SelectFromModel
+from sklearn.linear_model import LassoCV
+from sklearn.pipeline import Pipeline
+
+# 初始化日志
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # 定义更复杂的模型
 class DeeperNN(nn.Module):
@@ -40,9 +46,9 @@ def preprocess_data(file_path, y_file_path, y_column_name, all_feature_columns, 
     data = pd.read_csv(file_path)
     y_data = pd.read_csv(y_file_path)
 
-    print("Data columns:", data.columns)
-    print("Target columns:", y_data.columns)
-    print("Feature columns:", all_feature_columns)
+    logging.info("Data columns: %s", data.columns)
+    logging.info("Target columns: %s", y_data.columns)
+    logging.info("Feature columns: %s", all_feature_columns)
 
     if categorical_columns:
         for col in categorical_columns:
@@ -65,7 +71,7 @@ def preprocess_data(file_path, y_file_path, y_column_name, all_feature_columns, 
     if len(existing_features) == 0:
         raise ValueError("No matching feature columns found in the data.")
 
-    print("Matching feature columns:", existing_features)
+    logging.info("Matching feature columns: %s", existing_features)
 
     data = data[existing_features]
     
@@ -73,14 +79,14 @@ def preprocess_data(file_path, y_file_path, y_column_name, all_feature_columns, 
     data = data.apply(pd.to_numeric, errors='coerce')
     data = data.fillna(0)  # 填充 NaN 值
 
-    print(f"Data loaded from {file_path} with {data.shape[1]} features.")
+    logging.info(f"Data loaded from {file_path} with {data.shape[1]} features.")
 
-    return torch.tensor(data.values.astype(np.float32)), y
+    return data, torch.tensor(data.values.astype(np.float32)), y
 
 # 数据增强方法
 def balance_data(X, y, method='SMOTE'):
     unique, counts = np.unique(y.numpy(), return_counts=True)
-    print(f"Class distribution before balancing: {dict(zip(unique, counts))}")
+    logging.info(f"Class distribution before balancing: {dict(zip(unique, counts))}")
     if len(unique) > 1:
         if method == 'ADASYN':
             sampler = ADASYN(random_state=42)
@@ -89,49 +95,58 @@ def balance_data(X, y, method='SMOTE'):
         X_res, y_res = sampler.fit_resample(X.numpy(), y.numpy())
         return torch.tensor(X_res, dtype=torch.float32), torch.tensor(y_res, dtype=torch.float32)
     else:
-        print("Skipping balancing as there is only one class in target variable.")
+        logging.info("Skipping balancing as there is only one class in target variable.")
         return X, y
+
+# 进行特征选择方法比较实验
+def compare_feature_selection_methods(X, y):
+    X_df = pd.DataFrame(X.numpy())  # 将 Tensor 转换为 DataFrame
+    y_series = pd.Series(y.numpy())  # 将 Tensor 转换为 Series
+    
+    results = {}
+
+    # 方法 1: 互信息
+    mi = mutual_info_classif(X_df, y_series)
+    mi_selected_features = np.argsort(mi)[-10:]  # 选择互信息最高的特征
+    results['mutual_info'] = mi_selected_features
+
+    # 方法 2: 随机森林
+    rf = RandomForestClassifier(random_state=42)
+    rf.fit(X_df, y_series)
+    rf_selected_features = np.argsort(rf.feature_importances_)[-10:]
+    results['random_forest'] = rf_selected_features
+
+    return results
 
 # 特征选择
 def select_features(X, y, num_features=10):
-    print("Performing feature selection...")
-    mi = mutual_info_classif(X.numpy(), y.numpy(), discrete_features='auto')
+    logging.info("Performing feature selection...")
+    X_df = pd.DataFrame(X.numpy())  # 将 Tensor 转换为 DataFrame
+    y_series = pd.Series(y.numpy())  # 将 Tensor 转换为 Series
+
+    mi = mutual_info_classif(X_df, y_series, discrete_features='auto')
     selected_features = np.argsort(mi)[-num_features:]  # 选择互信息最高的特征
     if selected_features.size == 0:
         # 如果没有特征被选择，使用随机森林进行特征选择
-        print("No features selected using mutual information. Using RandomForest for feature selection.")
+        logging.info("No features selected using mutual information. Using RandomForest for feature selection.")
         model = RandomForestClassifier(random_state=42)
-        model.fit(X.numpy(), y.numpy())
+        model.fit(X_df, y_series)
         importances = model.feature_importances_
         selected_features = np.argsort(importances)[-num_features:]
 
-    print(f"Selected features: {selected_features}")
+    logging.info(f"Selected features: {selected_features}")
     if selected_features.size == 0:
         return X  # 如果没有特征被选择，返回原始特征
-    return X[:, selected_features]
 
-# 超参数优化
-def hyperparameter_tuning(X_train, y_train):
-    model = RandomForestClassifier(random_state=42)
-    param_distributions = {
-        'n_estimators': randint(50, 300),
-        'max_depth': randint(3, 15),
-        'min_samples_split': randint(2, 20),
-        'min_samples_leaf': randint(1, 20),
-        'max_features': uniform(0.1, 0.9)
-    }
+    return X[:, selected_features]
     
-    opt = RandomizedSearchCV(
-        estimator=model,
-        param_distributions=param_distributions,
-        n_iter=32,
-        cv=3,
-        scoring='accuracy',
-        random_state=42
-    )
-    
-    opt.fit(X_train.numpy(), y_train.numpy())
-    return opt.best_params_
+# 调优差分隐私参数
+def tune_dp_parameters(X, y, param_grid, cv=3):
+    model = RandomForestClassifier()
+    grid_search = GridSearchCV(estimator=model, param_grid=param_grid, cv=cv, scoring='accuracy')
+    grid_search.fit(X, y)
+    best_params = grid_search.best_params_
+    return best_params
 
 # 动态调整差分隐私噪声
 def add_dp_noise(gradients, sensitivity, epsilon, dynamic_factor=1.0):
@@ -139,9 +154,26 @@ def add_dp_noise(gradients, sensitivity, epsilon, dynamic_factor=1.0):
     noise = np.random.laplace(0, noise_scale, size=gradients.shape)
     return gradients + noise
 
+# 计算模型性能指标
+def compute_metrics(outputs, targets, threshold=0.5):
+    predictions = (outputs >= threshold).float()
+    accuracy = accuracy_score(targets, predictions)
+    precision = precision_score(targets, predictions, zero_division=0)
+    recall = recall_score(targets, predictions, zero_division=0)
+    f1 = f1_score(targets, predictions, zero_division=0)
+    roc_auc = roc_auc_score(targets, outputs)
+    return accuracy, precision, recall, f1, roc_auc
+
+# 选择最佳阈值
+def find_best_threshold(outputs, targets):
+    precisions, recalls, thresholds = precision_recall_curve(targets, outputs)
+    f1_scores = 2 * precisions * recalls / (precisions + recalls)
+    best_threshold = thresholds[np.argmax(f1_scores)]
+    return best_threshold
+
 # 联邦学习客户端类
 class FederatedLearningClient:
-    def __init__(self, model, data, target, epochs=1, batch_size=32, dp_sensitivity=0.1, dp_epsilon=1.0, dp_dynamic_factor=1.0):
+    def __init__(self, model, data, target, epochs=1, batch_size=32, dp_sensitivity=0.1, dp_epsilon=1.0, dp_dynamic_factor=1.0, val_split=0.2):
         self.model = model
         self.data = data
         self.target = target
@@ -157,32 +189,105 @@ class FederatedLearningClient:
         self.dp_dynamic_factor = dp_dynamic_factor
         self.best_threshold = 0.5
 
+        # 划分训练集和验证集
+        val_size = int(len(data) * val_split)
+        train_size = len(data) - val_size
+        dataset = TensorDataset(self.data, self.target)
+        self.train_dataset, self.val_dataset = random_split(dataset, [train_size, val_size])
+        
     def train(self):
         self.model.train()
-        dataset = TensorDataset(self.data, self.target)
-        loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+        train_loader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True)
+        val_loader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False)
+
+        train_losses = []
+        val_losses = []
+        train_accuracies = []
+        val_accuracies = []
+        train_precisions = []
+        val_precisions = []
+        train_recalls = []
+        val_recalls = []
+        train_f1s = []
+        val_f1s = []
+        train_roc_aucs = []
+        val_roc_aucs = []
+        learning_rates = []
 
         for epoch in range(self.epochs):
-            epoch_loss = 0
-            for inputs, targets in loader:
+            epoch_train_loss = 0
+            correct_train = 0
+            total_train = 0
+            all_train_outputs = []
+            all_train_targets = []
+
+            for inputs, targets in train_loader:
                 inputs, targets = inputs.to(self.device), targets.to(self.device)
                 self.optimizer.zero_grad()
                 outputs = self.model(inputs)
                 loss = self.criterion(outputs, targets.unsqueeze(1))
                 loss.backward()
                 self.optimizer.step()
-                epoch_loss += loss.item()
+                epoch_train_loss += loss.item()
+                all_train_outputs.append(outputs.cpu().detach())
+                all_train_targets.append(targets.cpu().detach())
+                predicted = (outputs >= 0.5).float()
+                total_train += targets.size(0)
+                correct_train += (predicted == targets.unsqueeze(1)).sum().item()
             
-            self.scheduler.step(epoch_loss / len(loader))
-            print(f"Epoch [{epoch+1}/{self.epochs}], Loss: {epoch_loss/len(loader):.4f}")
+            epoch_train_loss /= len(train_loader)
+            train_losses.append(epoch_train_loss)
+            train_accuracies.append(correct_train / total_train)
+            learning_rates.append(self.optimizer.param_groups[0]['lr'])
+            all_train_outputs = torch.cat(all_train_outputs)
+            all_train_targets = torch.cat(all_train_targets)
+            train_metrics = compute_metrics(all_train_outputs, all_train_targets)
+            train_precisions.append(train_metrics[1])
+            train_recalls.append(train_metrics[2])
+            train_f1s.append(train_metrics[3])
+            train_roc_aucs.append(train_metrics[4])
+
+            # 验证
+            self.model.eval()
+            epoch_val_loss = 0
+            correct_val = 0
+            total_val = 0
+            all_val_outputs = []
+            all_val_targets = []
+
+            with torch.no_grad():
+                for val_inputs, val_targets in val_loader:
+                    val_inputs, val_targets = val_inputs.to(self.device), val_targets.to(self.device)
+                    val_outputs = self.model(val_inputs)
+                    val_loss = self.criterion(val_outputs, val_targets.unsqueeze(1))
+                    epoch_val_loss += val_loss.item()
+                    all_val_outputs.append(val_outputs.cpu().detach())
+                    all_val_targets.append(val_targets.cpu().detach())
+                    predicted = (val_outputs >= 0.5).float()
+                    total_val += val_targets.size(0)
+                    correct_val += (predicted == val_targets.unsqueeze(1)).sum().item()
+                    
+            epoch_val_loss /= len(val_loader)
+            val_losses.append(epoch_val_loss)
+            val_accuracies.append(correct_val / total_val)
+            all_val_outputs = torch.cat(all_val_outputs)
+            all_val_targets = torch.cat(all_val_targets)
+            val_metrics = compute_metrics(all_val_outputs, all_val_targets)
+            val_precisions.append(val_metrics[1])
+            val_recalls.append(val_metrics[2])
+            val_f1s.append(val_metrics[3])
+            val_roc_aucs.append(val_metrics[4])
+
+            self.scheduler.step(epoch_val_loss)
+            logging.info(f"Epoch [{epoch+1}/{self.epochs}], Train Loss: {epoch_train_loss:.4f}, Val Loss: {epoch_val_loss:.4f}, Train Acc: {correct_train/total_train:.4f}, Val Acc: {correct_val/total_val:.4f}, Learning Rate: {self.optimizer.param_groups[0]['lr']:.6f}")
 
         self.model.eval()
         with torch.no_grad():
             outputs = self.model(self.data.to(self.device)).cpu()
             self.best_threshold = find_best_threshold(outputs, self.target)
-            print(f"Best threshold found: {self.best_threshold:.4f}")
+            logging.info(f"Best threshold found: {self.best_threshold:.4f}")
 
-        return self.model.state_dict()
+        return self.model.state_dict(), train_losses, val_losses, train_accuracies, val_accuracies, learning_rates, train_precisions, val_precisions, train_recalls, val_recalls, train_f1s, val_f1s, train_roc_aucs, val_roc_aucs
 
     def evaluate(self):
         self.model.eval()
@@ -210,81 +315,179 @@ class FederatedLearningServer:
     def update_model(self, aggregated_update):
         self.model.load_state_dict(aggregated_update)
 
-# 计算模型性能指标
-def compute_metrics(outputs, targets, threshold=0.5):
-    predictions = (outputs >= threshold).float()
-    accuracy = accuracy_score(targets, predictions)
-    precision = precision_score(targets, predictions, zero_division=0)
-    recall = recall_score(targets, predictions, zero_division=0)
-    f1 = f1_score(targets, predictions, zero_division=0)
-    roc_auc = roc_auc_score(targets, outputs)
-    return accuracy, precision, recall, f1, roc_auc
-
-# 选择最佳阈值
-def find_best_threshold(outputs, targets):
-    precisions, recalls, thresholds = precision_recall_curve(targets, outputs)
-    f1_scores = 2 * precisions * recalls / (precisions + recalls)
-    best_threshold = thresholds[np.argmax(f1_scores)]
-    return best_threshold
-
 # 联邦学习训练函数
-def federated_training(clients, server, rounds):
+def federated_training(clients, server, rounds, output_dir='results'):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    
     for round in range(rounds):
-        print(f"Round {round + 1} started.")
-        client_updates = [client.train() for client in clients if len(torch.unique(client.target)) > 1]
+        logging.info(f"Round {round + 1} started.")
+        client_updates = []
+        all_train_losses = []
+        all_val_losses = []
+        all_train_accuracies = []
+        all_val_accuracies = []
+        all_train_precisions = []
+        all_val_precisions = []
+        all_train_recalls = []
+        all_val_recalls = []
+        all_train_f1s = []
+        all_val_f1s = []
+        all_train_roc_aucs = []
+        all_val_roc_aucs = []
+        all_learning_rates = []
+
+        for i, client in enumerate(clients):
+            if len(torch.unique(client.target)) > 1:
+                update, train_losses, val_losses, train_accuracies, val_accuracies, learning_rates, train_precisions, val_precisions, train_recalls, val_recalls, train_f1s, val_f1s, train_roc_aucs, val_roc_aucs = client.train()
+                client_updates.append(update)
+                all_train_losses.append(train_losses)
+                all_val_losses.append(val_losses)
+                all_train_accuracies.append(train_accuracies)
+                all_val_accuracies.append(val_accuracies)
+                all_train_precisions.append(train_precisions)
+                all_val_precisions.append(val_precisions)
+                all_train_recalls.append(train_recalls)
+                all_val_recalls.append(val_recalls)
+                all_train_f1s.append(train_f1s)
+                all_val_f1s.append(val_f1s)
+                all_train_roc_aucs.append(train_roc_aucs)
+                all_val_roc_aucs.append(val_roc_aucs)
+                all_learning_rates.append(learning_rates)
+                
+                # 保存每轮训练的学习曲线
+                plt.figure()
+                plt.plot(train_losses, label=f'Client {i+1} Train Loss')
+                plt.plot(val_losses, label=f'Client {i+1} Val Loss', linestyle='--')
+                plt.xlabel('Epoch')
+                plt.ylabel('Loss')
+                plt.title(f'Client {i+1} Training and Validation Loss - Round {round + 1}')
+                plt.legend(loc='upper right')
+                plt.savefig(os.path.join(output_dir, f'client_{i+1}_train_val_loss_round_{round + 1}.png'))
+                plt.close()
+
+                plt.figure()
+                plt.plot(train_accuracies, label=f'Client {i+1} Train Accuracy')
+                plt.plot(val_accuracies, label=f'Client {i+1} Val Accuracy', linestyle='--')
+                plt.xlabel('Epoch')
+                plt.ylabel('Accuracy')
+                plt.title(f'Client {i+1} Training and Validation Accuracy - Round {round + 1}')
+                plt.legend(loc='upper right')
+                plt.savefig(os.path.join(output_dir, f'client_{i+1}_train_val_accuracy_round_{round + 1}.png'))
+                plt.close()
+
+                plt.figure()
+                plt.plot(learning_rates, label=f'Client {i+1} Learning Rate')
+                plt.xlabel('Epoch')
+                plt.ylabel('Learning Rate')
+                plt.title(f'Client {i+1} Learning Rate - Round {round + 1}')
+                plt.legend(loc='upper right')
+                plt.savefig(os.path.join(output_dir, f'client_{i+1}_learning_rate_round_{round + 1}.png'))
+                plt.close()
+
+                plt.figure()
+                plt.plot(train_precisions, label=f'Client {i+1} Train Precision')
+                plt.plot(val_precisions, label=f'Client {i+1} Val Precision', linestyle='--')
+                plt.xlabel('Epoch')
+                plt.ylabel('Precision')
+                plt.title(f'Client {i+1} Training and Validation Precision - Round {round + 1}')
+                plt.legend(loc='upper right')
+                plt.savefig(os.path.join(output_dir, f'client_{i+1}_train_val_precision_round_{round + 1}.png'))
+                plt.close()
+
+                plt.figure()
+                plt.plot(train_recalls, label=f'Client {i+1} Train Recall')
+                plt.plot(val_recalls, label=f'Client {i+1} Val Recall', linestyle='--')
+                plt.xlabel('Epoch')
+                plt.ylabel('Recall')
+                plt.title(f'Client {i+1} Training and Validation Recall - Round {round + 1}')
+                plt.legend(loc='upper right')
+                plt.savefig(os.path.join(output_dir, f'client_{i+1}_train_val_recall_round_{round + 1}.png'))
+                plt.close()
+
+                plt.figure()
+                plt.plot(train_f1s, label=f'Client {i+1} Train F1 Score')
+                plt.plot(val_f1s, label=f'Client {i+1} Val F1 Score', linestyle='--')
+                plt.xlabel('Epoch')
+                plt.ylabel('F1 Score')
+                plt.title(f'Client {i+1} Training and Validation F1 Score - Round {round + 1}')
+                plt.legend(loc='upper right')
+                plt.savefig(os.path.join(output_dir, f'client_{i+1}_train_val_f1_round_{round + 1}.png'))
+                plt.close()
+
+                plt.figure()
+                plt.plot(train_roc_aucs, label=f'Client {i+1} Train ROC AUC')
+                plt.plot(val_roc_aucs, label=f'Client {i+1} Val ROC AUC', linestyle='--')
+                plt.xlabel('Epoch')
+                plt.ylabel('ROC AUC')
+                plt.title(f'Client {i+1} Training and Validation ROC AUC - Round {round + 1}')
+                plt.legend(loc='upper right')
+                plt.savefig(os.path.join(output_dir, f'client_{i+1}_train_val_roc_auc_round_{round + 1}.png'))
+                plt.close()
+            else:
+                logging.info(f"Skipping training for client {i+1} due to insufficient class variety in targets.")
+
         if client_updates:
             aggregated_update = server.aggregate_updates(client_updates)
             server.update_model(aggregated_update)
-            print(f"Round {round + 1} completed.")
-            
+            logging.info(f"Round {round + 1} completed.")
+
             for i, client in enumerate(clients):
                 metrics = client.evaluate()
-                print(f"Client {i+1} evaluation metrics - Accuracy: {metrics[0]:.4f}, Precision: {metrics[1]:.4f}, Recall: {metrics[2]:.4f}, F1 Score: {metrics[3]:.4f}, ROC AUC: {metrics[4]:.4f}")
+                logging.info(f"Client {i+1} evaluation metrics - Accuracy: {metrics[0]:.4f}, Precision: {metrics[1]:.4f}, Recall: {metrics[2]:.4f}, F1 Score: {metrics[3]:.4f}, ROC AUC: {metrics[4]:.4f}")
+
         else:
-            print(f'Round {round + 1} skipped due to insufficient class variety in targets.')
+            logging.info(f'Round {round + 1} skipped due to insufficient class variety in targets.')
 
 # 加载数据并初始化客户端和服务器
-try:
-    # 乳腺癌数据
-    feature_columns = ['radius_mean', 'perimeter_mean', 'area_mean', 'concavity_mean',
-                       'concave points_mean', 'radius_worst', 'perimeter_worst', 
-                       'area_worst', 'concavity_worst', 'concave points_worst']
-    
-    X_breast_train, y_breast_train = preprocess_data(
-        '/content/FedHealthDP_Project/data/split/breast_cancer_X_train.csv',
-        '/content/FedHealthDP_Project/data/split/breast_cancer_y_train.csv',
-        'diagnosis', all_feature_columns=feature_columns)
+def main():
+    try:
+        # 乳腺癌数据
+        feature_columns = ['radius_mean', 'perimeter_mean', 'area_mean', 'concavity_mean',
+                           'concave points_mean', 'radius_worst', 'perimeter_worst', 
+                           'area_worst', 'concavity_worst', 'concave points_worst']
+        
+        df_breast_train, X_breast_train, y_breast_train = preprocess_data(
+            '/content/FedHealthDP_Project/data/split/breast_cancer_X_train.csv',
+            '/content/FedHealthDP_Project/data/split/breast_cancer_y_train.csv',
+            'diagnosis', all_feature_columns=feature_columns)
 
-    # 打印目标变量的分布
-    print("Target variable distribution after preprocessing:", torch.unique(y_breast_train, return_counts=True))
+        # 打印目标变量的分布
+        logging.info("Target variable distribution after preprocessing: %s", torch.unique(y_breast_train, return_counts=True))
 
-    if X_breast_train.shape[1] == 0:
-        raise ValueError("No features selected for breast cancer data.")
+        if X_breast_train.shape[1] == 0:
+            raise ValueError("No features selected for breast cancer data.")
 
-    X_breast_train = select_features(X_breast_train, y_breast_train, num_features=10)
+        # 进行特征选择方法比较实验
+        feature_selection_results = compare_feature_selection_methods(X_breast_train, y_breast_train)
+        logging.info("Feature selection comparison results: %s", feature_selection_results)
+        
+        X_breast_train = select_features(X_breast_train, y_breast_train, num_features=10)
 
-    if len(torch.unique(y_breast_train)) > 1:
-        X_breast_train, y_breast_train = balance_data(X_breast_train, y_breast_train, method='SMOTE')
-        breast_models = [DeeperNN(X_breast_train.shape[1])]
-        breast_clients = []
-        for model in breast_models:
-            best_params = hyperparameter_tuning(X_breast_train, y_breast_train)
-            breast_clients.append(FederatedLearningClient(model, X_breast_train, y_breast_train, epochs=30, batch_size=32))
-    else:
-        breast_clients = []
+        if len(torch.unique(y_breast_train)) > 1:
+            X_breast_train, y_breast_train = balance_data(X_breast_train, y_breast_train, method='SMOTE')
+            breast_models = [DeeperNN(X_breast_train.shape[1])]
+            breast_clients = []
+            for model in breast_models:
+                breast_clients.append(FederatedLearningClient(model, X_breast_train, y_breast_train, epochs=30, batch_size=32, val_split=0.2))
+        else:
+            breast_clients = []
 
-    # 初始化服务器
-    global_model = DeeperNN(X_breast_train.shape[1])
-    server = FederatedLearningServer(global_model, dp_epsilon=1.0, dp_sensitivity=0.1, dp_dynamic_factor=1.0)
+        # 初始化服务器
+        global_model = DeeperNN(X_breast_train.shape[1])
+        server = FederatedLearningServer(global_model, dp_epsilon=1.0, dp_sensitivity=0.1, dp_dynamic_factor=1.0)
 
-    # 创建客户端列表，去除 None 的客户端
-    clients = breast_clients
+        # 创建客户端列表，去除 None 的客户端
+        clients = breast_clients
 
-    # 运行联邦学习训练
-    federated_training(clients, server, rounds=10)
+        # 运行联邦学习训练
+        federated_training(clients, server, rounds=10, output_dir='breast_cancer_training_results')
 
-    # 保存全局模型
-    torch.save(global_model.state_dict(), '/content/FedHealthDP_Project/models/global_model.pth')
+        # 保存全局模型
+        torch.save(global_model.state_dict(), '/content/FedHealthDP_Project/models/global_model.pth')
 
-except Exception as e:
-    print(f"An error occurred: {e}")
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
+
+if __name__ == "__main__":
+    main()
