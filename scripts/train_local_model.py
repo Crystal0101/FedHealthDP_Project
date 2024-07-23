@@ -54,7 +54,7 @@ def preprocess_data(file_path, y_file_path, y_column_name, all_feature_columns, 
         for col in categorical_columns:
             if col in data.columns:
                 le = LabelEncoder()
-                data[col] = le.fit_transform(data[col])
+                data[col] = le.fit_transform(col)
 
     scaler = StandardScaler()
     numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
@@ -458,48 +458,50 @@ def main():
                            'concave points_mean', 'radius_worst', 'perimeter_worst', 
                            'area_worst', 'concavity_worst', 'concave points_worst']
         
-        df_breast_train, X_breast_train, y_breast_train = preprocess_data(
-            '/content/FedHealthDP_Project/data/split/breast_cancer_X_train.csv',
-            '/content/FedHealthDP_Project/data/split/breast_cancer_y_train.csv',
-            'diagnosis', all_feature_columns=feature_columns)
-
-        # 打印目标变量的分布
-        logging.info("Target variable distribution after preprocessing: %s", torch.unique(y_breast_train, return_counts=True))
-
-        if X_breast_train.shape[1] == 0:
-            raise ValueError("No features selected for breast cancer data.")
-
-        # 进行特征选择方法比较实验
-        feature_selection_results = compare_feature_selection_methods(X_breast_train, y_breast_train)
-        logging.info("Feature selection comparison results: %s", feature_selection_results)
+        # 预处理所有数据集
+        datasets = [
+            ('/content/FedHealthDP_Project/data/split/breast_cancer_X_train_0.csv', '/content/FedHealthDP_Project/data/split/breast_cancer_y_train_0.csv'),
+            ('/content/FedHealthDP_Project/data/split/breast_cancer_X_train_1.csv', '/content/FedHealthDP_Project/data/split/breast_cancer_y_train_1.csv'),
+            ('/content/FedHealthDP_Project/data/split/breast_cancer_X_train_2.csv', '/content/FedHealthDP_Project/data/split/breast_cancer_y_train_2.csv')
+        ]
         
-        X_breast_train = select_features(X_breast_train, y_breast_train, num_features=10)
-
-        if len(torch.unique(y_breast_train)) > 1:
-            X_breast_train, y_breast_train = balance_data(X_breast_train, y_breast_train, method='SMOTE')
-            breast_models = [DeeperNN(X_breast_train.shape[1])]
-            breast_clients = []
-            for model in breast_models:
-                breast_clients.append(FederatedLearningClient(model, X_breast_train, y_breast_train, epochs=30, batch_size=32, val_split=0.2))
-        else:
-            breast_clients = []
-
-        # 初始化服务器
-        global_model = DeeperNN(X_breast_train.shape[1])
+        clients = []
+        for i, (X_path, y_path) in enumerate(datasets):
+            df_train, X_train, y_train = preprocess_data(X_path, y_path, 'diagnosis', all_feature_columns=feature_columns)
+            
+            logging.info(f"Dataset {i} target variable distribution after preprocessing: %s", torch.unique(y_train, return_counts=True))
+            
+            if X_train.shape[1] == 0:
+                raise ValueError("No features selected for breast cancer data.")
+            
+            feature_selection_results = compare_feature_selection_methods(X_train, y_train)
+            logging.info(f"Dataset {i} feature selection comparison results: %s", feature_selection_results)
+            
+            X_train = select_features(X_train, y_train, num_features=10)
+            
+            if len(torch.unique(y_train)) > 1:
+                X_train, y_train = balance_data(X_train, y_train, method='SMOTE')
+                model = DeeperNN(X_train.shape[1])
+                clients.append(FederatedLearningClient(model, X_train, y_train, epochs=30, batch_size=32, val_split=0.2))
+        
+        global_model = DeeperNN(X_train.shape[1])
         server = FederatedLearningServer(global_model, dp_epsilon=1.0, dp_sensitivity=0.1, dp_dynamic_factor=1.0)
 
-        # 创建客户端列表，去除 None 的客户端
-        clients = breast_clients
-
-        # 运行联邦学习训练
         federated_training(clients, server, rounds=10, output_dir='breast_cancer_training_results')
 
-        # 保存全局模型
         torch.save(global_model.state_dict(), '/content/FedHealthDP_Project/models/global_model.pth')
 
-        # 经典算法比较实验
-        X_breast_train, X_breast_test, y_breast_train, y_breast_test = train_test_split(X_breast_train, y_breast_train, test_size=0.2, random_state=42)
-        classical_results = compare_classical_algorithms(X_breast_train.numpy(), y_breast_train.numpy(), X_breast_test.numpy(), y_breast_test.numpy())
+        X_train_combined, y_train_combined = [], []
+        for X_path, y_path in datasets:
+            df_train, X_train, y_train = preprocess_data(X_path, y_path, 'diagnosis', all_feature_columns=feature_columns)
+            X_train_combined.append(X_train)
+            y_train_combined.append(y_train)
+        
+        X_train_combined = torch.cat(X_train_combined)
+        y_train_combined = torch.cat(y_train_combined)
+        
+        X_train, X_test, y_train, y_test = train_test_split(X_train_combined, y_train_combined, test_size=0.2, random_state=42)
+        classical_results = compare_classical_algorithms(X_train.numpy(), y_train.numpy(), X_test.numpy(), y_test.numpy())
         logging.info(f"Classical algorithms comparison results: {classical_results}")
 
     except Exception as e:

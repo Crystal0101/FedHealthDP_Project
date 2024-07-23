@@ -269,51 +269,41 @@ with open('/content/FedHealthDP_Project/data/split/breast_features.csv', 'r') as
 model_path = '/content/FedHealthDP_Project/models/global_model.pth'
 
 try:
-    # 加载乳腺癌测试数据
-    X_breast_test, y_breast_test, feature_names = preprocess_data(
-        '/content/FedHealthDP_Project/data/split/breast_cancer_X_test.csv',
-        '/content/FedHealthDP_Project/data/split/breast_cancer_y_test.csv',
-        breast_feature_columns,
-        'diagnosis'
-    )
-
-    # 特征选择
-    X_breast_test, selected_importances, selected_feature_names = select_features(X_breast_test, y_breast_test, feature_names, num_features=10)
-
-    # 加载训练好的模型
-    model = DeeperNN(X_breast_test.shape[1])
-    model.load_state_dict(torch.load(model_path))
-    model.eval()
-
-    # 评估乳腺癌模型
-    logging.info("Evaluating Breast Cancer Model")
-    best_threshold_breast = find_best_threshold(model(X_breast_test).cpu().detach(), y_breast_test)
-    evaluate_model(model, X_breast_test, y_breast_test, threshold=best_threshold_breast, output_dir='breast_cancer_results')
+    datasets = [
+        ('/content/FedHealthDP_Project/data/split/breast_cancer_X_test_0.csv', '/content/FedHealthDP_Project/data/split/breast_cancer_y_test_0.csv'),
+        ('/content/FedHealthDP_Project/data/split/breast_cancer_X_test_1.csv', '/content/FedHealthDP_Project/data/split/breast_cancer_y_test_1.csv'),
+        ('/content/FedHealthDP_Project/data/split/breast_cancer_X_test_2.csv', '/content/FedHealthDP_Project/data/split/breast_cancer_y_test_2.csv')
+    ]
     
-    # 加载乳腺癌训练数据并进行交叉验证
-    logging.info("Cross-validating Breast Cancer Model")
-    X_breast_train, y_breast_train, feature_names = preprocess_data(
-        '/content/FedHealthDP_Project/data/split/breast_cancer_X_train.csv',
-        '/content/FedHealthDP_Project/data/split/breast_cancer_y_train.csv',
-        breast_feature_columns,
-        'diagnosis'
-    )
-    X_breast_train, selected_importances, selected_feature_names = select_features(X_breast_train, y_breast_train, feature_names, num_features=10)
-    cross_validate_model(X_breast_train, y_breast_train, feature_names, output_dir='breast_cancer_results')
-
-    # 评估经典机器学习模型
-    logging.info("Evaluating Classical Models")
-    evaluate_classical_models(X_breast_train.numpy(), y_breast_train.numpy(), X_breast_test.numpy(), y_breast_test.numpy(), output_dir='breast_cancer_results')
-
-    # 绘制特征重要性图并保存到本地文件
-    plt.figure()
-    plt.barh(selected_feature_names, selected_importances)
-    plt.xlabel('Feature Importance')
-    plt.ylabel('Features')
-    plt.title('Top 10 Feature Importances')
-    plt.tight_layout()
-    plt.savefig(os.path.join('breast_cancer_results', 'feature_importance.png'))
-    plt.close()
+    for i, (X_path, y_path) in enumerate(datasets):
+        X_test, y_test, feature_names = preprocess_data(X_path, y_path, breast_feature_columns, 'diagnosis')
+        
+        X_test, selected_importances, selected_feature_names = select_features(X_test, y_test, feature_names, num_features=10)
+        
+        model = DeeperNN(X_test.shape[1])
+        model.load_state_dict(torch.load(model_path))
+        model.eval()
+        
+        logging.info(f"Evaluating Breast Cancer Model for dataset {i}")
+        best_threshold = find_best_threshold(model(X_test).cpu().detach(), y_test)
+        evaluate_model(model, X_test, y_test, threshold=best_threshold, output_dir=f'breast_cancer_results_{i}')
+        
+        logging.info(f"Cross-validating Breast Cancer Model for dataset {i}")
+        X_train, y_train, feature_names = preprocess_data(X_path.replace('_test_', '_train_'), y_path.replace('_test_', '_train_'), breast_feature_columns, 'diagnosis')
+        X_train, selected_importances, selected_feature_names = select_features(X_train, y_train, feature_names, num_features=10)
+        cross_validate_model(X_train, y_train, feature_names, output_dir=f'breast_cancer_results_{i}')
+        
+        logging.info(f"Evaluating Classical Models for dataset {i}")
+        evaluate_classical_models(X_train.numpy(), y_train.numpy(), X_test.numpy(), y_test.numpy(), output_dir=f'breast_cancer_results_{i}')
+        
+        plt.figure()
+        plt.barh(selected_feature_names, selected_importances)
+        plt.xlabel('Feature Importance')
+        plt.ylabel('Features')
+        plt.title(f'Top 10 Feature Importances - Dataset {i}')
+        plt.tight_layout()
+        plt.savefig(os.path.join(f'breast_cancer_results_{i}', 'feature_importance.png'))
+        plt.close()
 
 except Exception as e:
     logging.error(f"An error occurred: {e}")

@@ -40,7 +40,7 @@ def clean_data(data):
         logging.error(f"数据清洗失败: {e}")
         raise
 
-def eda_analysis(data):
+def eda_analysis(data, dataset_index):
     try:
         # 描述性统计
         logging.info("数据描述性统计:")
@@ -52,13 +52,13 @@ def eda_analysis(data):
         plt.title('Diagnosis Distribution', fontsize=16)
         plt.xlabel('Diagnosis', fontsize=14)
         plt.ylabel('Count', fontsize=14)
-        plt.savefig('/content/FedHealthDP_Project/data/eda/diagnosis_distribution.png')
+        plt.savefig(f'/content/FedHealthDP_Project/data/eda/diagnosis_distribution_{dataset_index}.png')
         plt.close()
 
         # 绘制数值特征的直方图
         data.hist(bins=20, figsize=(20, 15))
         plt.tight_layout()
-        plt.savefig('/content/FedHealthDP_Project/data/eda/numerical_features_histogram.png')
+        plt.savefig(f'/content/FedHealthDP_Project/data/eda/numerical_features_histogram_{dataset_index}.png')
         plt.close()
 
         # 绘制数值特征的箱线图
@@ -67,7 +67,7 @@ def eda_analysis(data):
         plt.title('Numerical Features Boxplot', fontsize=16)
         plt.xticks(rotation=90, fontsize=12)
         plt.tight_layout()
-        plt.savefig('/content/FedHealthDP_Project/data/eda/numerical_features_boxplot.png')
+        plt.savefig(f'/content/FedHealthDP_Project/data/eda/numerical_features_boxplot_{dataset_index}.png')
         plt.close()
 
         # 相关矩阵热力图
@@ -79,12 +79,24 @@ def eda_analysis(data):
         plt.yticks(rotation=0, fontsize=12)
         plt.title('Correlation Matrix Heatmap', fontsize=16)
         plt.tight_layout()
-        plt.savefig('/content/FedHealthDP_Project/data/eda/breast_correlation_heatmap.png')
+        plt.savefig(f'/content/FedHealthDP_Project/data/eda/breast_correlation_heatmap_{dataset_index}.png')
         plt.close()
         logging.info("EDA分析完成")
     except Exception as e:
         logging.error(f"EDA分析失败: {e}")
         raise
+
+def visualize_data(data, dataset_index):
+    try:
+        plt.figure(figsize=(20, 20))
+        sns.pairplot(data, hue='diagnosis', height=2.5)
+        plt.savefig(f'/content/FedHealthDP_Project/data/eda/breast_pairplot_{dataset_index}.png')
+        plt.close()
+        logging.info("数据可视化完成")
+    except Exception as e:
+        logging.error(f"数据可视化失败: {e}")
+        raise
+
 
 def feature_engineering(data):
     try:
@@ -126,11 +138,11 @@ def feature_selection(data, target_column='diagnosis', k=10):
         logging.error(f"特征选择失败: {e}")
         raise
 
-def visualize_data(data):
+def visualize_data(data, dataset_index):
     try:
         plt.figure(figsize=(20, 20))
         sns.pairplot(data, hue='diagnosis', height=2.5)
-        plt.savefig('/content/FedHealthDP_Project/data/eda/breast_pairplot.png')
+        plt.savefig(f'/content/FedHealthDP_Project/data/eda/breast_pairplot_{dataset_index}.png')
         plt.close()
         logging.info("数据可视化完成")
     except Exception as e:
@@ -156,40 +168,53 @@ def split_data(data, selected_features, target_column='diagnosis', test_size=0.2
         logging.error(f"数据分割失败: {e}")
         raise
 
+
 def main():
     try:
         # 数据读取
-        data = read_data('/content/FedHealthDP_Project/data/kaggle/breast_cancer_0.csv')
+        data_files = [
+            '/content/FedHealthDP_Project/data/kaggle/breast_cancer_0.csv',
+            '/content/FedHealthDP_Project/data/kaggle/breast_cancer_1.csv',
+            '/content/FedHealthDP_Project/data/kaggle/breast_cancer_2.csv'
+        ]
         
-        # 数据清洗
-        data = clean_data(data)
-        
-        # 暂存目标列
-        y = data['diagnosis'].copy()
-        
-        # EDA分析
-        eda_analysis(data)
-        
-        # 特征工程
-        data = feature_engineering(data)
-        
-        # 恢复目标列
-        data['diagnosis'] = y
-        
-        # 特征选择
-        data, selected_features = feature_selection(data)
-        
-        # 数据可视化
-        visualize_data(data)
-        
-        # 数据分割
-        X_train, X_test, y_train, y_test = split_data(data, selected_features)
-        
-        # 保存处理后的数据
-        processed_data_path = '/content/FedHealthDP_Project/data/processed/breast_cleaned_data.csv'
-        data.to_csv(processed_data_path, index=False)
-        
-        logging.info("数据处理和保存完成")
+        for i, file in enumerate(data_files):
+            data = read_data(file)
+            
+            # 数据清洗
+            data = clean_data(data)
+            
+            # 暂存目标列
+            y = data['diagnosis'].copy()
+            
+            # EDA分析
+            eda_analysis(data, i)
+            
+            # 特征工程
+            data = feature_engineering(data)
+            
+            # 恢复目标列
+            data['diagnosis'] = y
+            
+            # 特征选择
+            data, selected_features = feature_selection(data)
+            
+            # 数据可视化
+            visualize_data(data, i)
+            
+            # 数据分割
+            X_train, X_test, y_train, y_test = split_data(data, selected_features)
+            
+            # 保存处理后的数据，增加后缀以区分
+            processed_data_path_train = f'/content/FedHealthDP_Project/data/processed/breast_cleaned_data_train_{i}.csv'
+            processed_data_path_test = f'/content/FedHealthDP_Project/data/processed/breast_cleaned_data_test_{i}.csv'
+            data.to_csv(processed_data_path_train, index=False)
+            X_train.to_csv(f'/content/FedHealthDP_Project/data/split/breast_cancer_X_train_{i}.csv', index=False)
+            X_test.to_csv(f'/content/FedHealthDP_Project/data/split/breast_cancer_X_test_{i}.csv', index=False)
+            y_train.to_csv(f'/content/FedHealthDP_Project/data/split/breast_cancer_y_train_{i}.csv', index=False, header=True)
+            y_test.to_csv(f'/content/FedHealthDP_Project/data/split/breast_cancer_y_test_{i}.csv', index=False, header=True)
+            
+            logging.info(f"数据处理和保存完成 for dataset {i}")
     except Exception as e:
         logging.error(f"数据处理流程失败: {e}")
 
