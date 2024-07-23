@@ -17,11 +17,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import logging
 from sklearn.model_selection import StratifiedKFold
-# 经典算法比较实验
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
-
-
 
 # 初始化日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -52,8 +49,6 @@ class DeeperNN(nn.Module):
     def forward(self, x):
         return self.layers(x)
 
-
-# 数据预处理函数
 def preprocess_data(file_path, y_file_path, y_column_name, all_feature_columns, categorical_columns=None):
     data = pd.read_csv(file_path)
     y_data = pd.read_csv(y_file_path)
@@ -66,7 +61,7 @@ def preprocess_data(file_path, y_file_path, y_column_name, all_feature_columns, 
         for col in categorical_columns:
             if col in data.columns:
                 le = LabelEncoder()
-                data[col] = le.fit_transform(col)
+                data[col] = le.fit_transform(data[col])
 
     scaler = StandardScaler()
     numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
@@ -75,7 +70,6 @@ def preprocess_data(file_path, y_file_path, y_column_name, all_feature_columns, 
     if y_column_name not in y_data.columns:
         raise ValueError(f"Column {y_column_name} not found in {y_file_path}")
 
-    # 确保目标列中的所有正类值被正确映射为 1
     y = y_data[y_column_name].apply(lambda x: 1 if x in ['M', 'YES', 1] else 0).values
     y = torch.tensor(y.astype(np.float32), dtype=torch.float32)
 
@@ -86,8 +80,6 @@ def preprocess_data(file_path, y_file_path, y_column_name, all_feature_columns, 
     logging.info("Matching feature columns: %s", existing_features)
 
     data = data[existing_features]
-    
-    # 确保所有数据都是数值类型并转换为浮点数格式
     data = data.apply(pd.to_numeric, errors='coerce')
     data = data.fillna(0)  # 填充 NaN 值
 
@@ -95,7 +87,6 @@ def preprocess_data(file_path, y_file_path, y_column_name, all_feature_columns, 
 
     return data, torch.tensor(data.values.astype(np.float32)), y
 
-# 数据增强方法
 def balance_data(X, y, method='SMOTE'):
     unique, counts = np.unique(y.numpy(), return_counts=True)
     logging.info(f"Class distribution before balancing: {dict(zip(unique, counts))}")
@@ -110,19 +101,16 @@ def balance_data(X, y, method='SMOTE'):
         logging.info("Skipping balancing as there is only one class in target variable.")
         return X, y
 
-# 进行特征选择方法比较实验
 def compare_feature_selection_methods(X, y):
-    X_df = pd.DataFrame(X.numpy())  # 将 Tensor 转换为 DataFrame
-    y_series = pd.Series(y.numpy())  # 将 Tensor 转换为 Series
+    X_df = pd.DataFrame(X.numpy())
+    y_series = pd.Series(y.numpy())
     
     results = {}
 
-    # 方法 1: 互信息
     mi = mutual_info_classif(X_df, y_series)
-    mi_selected_features = np.argsort(mi)[-10:]  # 选择互信息最高的特征
+    mi_selected_features = np.argsort(mi)[-10:]
     results['mutual_info'] = mi_selected_features
 
-    # 方法 2: 随机森林
     rf = RandomForestClassifier(random_state=42)
     rf.fit(X_df, y_series)
     rf_selected_features = np.argsort(rf.feature_importances_)[-10:]
@@ -130,16 +118,14 @@ def compare_feature_selection_methods(X, y):
 
     return results
 
-# 特征选择
 def select_features(X, y, num_features=10):
     logging.info("Performing feature selection...")
-    X_df = pd.DataFrame(X.numpy())  # 将 Tensor 转换为 DataFrame
-    y_series = pd.Series(y.numpy())  # 将 Tensor 转换为 Series
+    X_df = pd.DataFrame(X.numpy())
+    y_series = pd.Series(y.numpy())
 
     mi = mutual_info_classif(X_df, y_series, discrete_features='auto')
-    selected_features = np.argsort(mi)[-num_features:]  # 选择互信息最高的特征
+    selected_features = np.argsort(mi)[-num_features:]
     if selected_features.size == 0:
-        # 如果没有特征被选择，使用随机森林进行特征选择
         logging.info("No features selected using mutual information. Using RandomForest for feature selection.")
         model = RandomForestClassifier(random_state=42)
         model.fit(X_df, y_series)
@@ -148,11 +134,10 @@ def select_features(X, y, num_features=10):
 
     logging.info(f"Selected features: {selected_features}")
     if selected_features.size == 0:
-        return X  # 如果没有特征被选择，返回原始特征
+        return X
 
     return X[:, selected_features]
 
-# 计算模型性能指标
 def compute_metrics(outputs, targets, threshold=0.5):
     predictions = (outputs >= threshold).float()
     accuracy = accuracy_score(targets, predictions)
@@ -162,20 +147,17 @@ def compute_metrics(outputs, targets, threshold=0.5):
     roc_auc = roc_auc_score(targets, outputs)
     return accuracy, precision, recall, f1, roc_auc
 
-# 选择最佳阈值
 def find_best_threshold(outputs, targets):
     precisions, recalls, thresholds = precision_recall_curve(targets, outputs)
     f1_scores = 2 * precisions * recalls / (precisions + recalls)
     best_threshold = thresholds[np.argmax(f1_scores)]
     return best_threshold
 
-# 动态调整差分隐私噪声
 def add_dp_noise(gradients, sensitivity, epsilon, dynamic_factor=1.0):
     noise_scale = sensitivity / (epsilon * dynamic_factor)
     noise = np.random.laplace(0, noise_scale, size=gradients.shape)
     return gradients + noise
-    
-# 联邦学习客户端类
+
 class FederatedLearningClient:
     def __init__(self, model, data, target, epochs=1, batch_size=32, dp_sensitivity=0.1, dp_epsilon=1.0, dp_dynamic_factor=1.0, val_split=0.2, early_stopping_patience=10):
         self.model = model
@@ -196,7 +178,6 @@ class FederatedLearningClient:
         self.early_stopping_counter = 0
         self.best_val_loss = float('inf')
 
-        # 划分训练集和验证集
         val_size = int(len(data) * val_split)
         train_size = len(data) - val_size
         dataset = TensorDataset(self.data, self.target)
@@ -254,7 +235,6 @@ class FederatedLearningClient:
             train_f1s.append(train_metrics[3])
             train_roc_aucs.append(train_metrics[4])
 
-            # 验证
             self.model.eval()
             epoch_val_loss = 0
             correct_val = 0
@@ -288,7 +268,6 @@ class FederatedLearningClient:
             self.scheduler.step(epoch_val_loss)
             logging.info(f"Epoch [{epoch+1}/{self.epochs}], Train Loss: {epoch_train_loss:.4f}, Val Loss: {epoch_val_loss:.4f}, Train Acc: {correct_train/total_train:.4f}, Val Acc: {correct_val/total_val:.4f}, Learning Rate: {self.optimizer.param_groups[0]['lr']:.6f}")
 
-            # 早停法
             if epoch_val_loss < self.best_val_loss:
                 self.best_val_loss = epoch_val_loss
                 self.early_stopping_counter = 0
@@ -313,7 +292,6 @@ class FederatedLearningClient:
             metrics = compute_metrics(outputs, self.target, threshold=self.best_threshold)
         return metrics
 
-# 经典算法比较实验
 def compare_classical_algorithms(X_train, y_train, X_test, y_test):
     classifiers = {
         'RandomForest': RandomForestClassifier(random_state=42),
@@ -334,8 +312,6 @@ def compare_classical_algorithms(X_train, y_train, X_test, y_test):
 
     return results
 
-
-# 联邦学习服务器类
 class FederatedLearningServer:
     def __init__(self, model, dp_epsilon, dp_sensitivity, dp_dynamic_factor=1.0):
         self.model = model
@@ -354,7 +330,6 @@ class FederatedLearningServer:
     def update_model(self, aggregated_update):
         self.model.load_state_dict(aggregated_update)
 
-# 联邦学习训练函数
 def federated_training(clients, server, rounds, output_dir='results'):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -393,8 +368,7 @@ def federated_training(clients, server, rounds, output_dir='results'):
                 all_train_roc_aucs.append(train_roc_aucs)
                 all_val_roc_aucs.append(val_roc_aucs)
                 all_learning_rates.append(learning_rates)
-                
-                # 保存每轮训练的学习曲线
+
                 plt.figure()
                 plt.plot(train_losses, label=f'Client {i+1} Train Loss')
                 plt.plot(val_losses, label=f'Client {i+1} Val Loss', linestyle='--')
@@ -478,15 +452,12 @@ def federated_training(clients, server, rounds, output_dir='results'):
         else:
             logging.info(f'Round {round + 1} skipped due to insufficient class variety in targets.')
 
-# 加载数据并初始化客户端和服务器
 def main():
     try:
-        # 乳腺癌数据
         feature_columns = ['radius_mean', 'perimeter_mean', 'area_mean', 'concavity_mean',
                            'concave points_mean', 'radius_worst', 'perimeter_worst', 
                            'area_worst', 'concavity_worst', 'concave points_worst']
         
-        # 预处理所有数据集
         datasets = [
             ('/content/FedHealthDP_Project/data/split/breast_cancer_X_train_0.csv', '/content/FedHealthDP_Project/data/split/breast_cancer_y_train_0.csv'),
             ('/content/FedHealthDP_Project/data/split/breast_cancer_X_train_1.csv', '/content/FedHealthDP_Project/data/split/breast_cancer_y_train_1.csv'),
@@ -537,4 +508,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

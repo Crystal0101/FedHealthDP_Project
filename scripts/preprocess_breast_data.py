@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.feature_selection import SelectKBest, f_classif
 from sklearn.model_selection import train_test_split
+from imblearn.combine import SMOTEENN
 import logging
 
 # 设置日志
@@ -86,18 +87,6 @@ def eda_analysis(data, dataset_index):
         logging.error(f"EDA分析失败: {e}")
         raise
 
-def visualize_data(data, dataset_index):
-    try:
-        plt.figure(figsize=(20, 20))
-        sns.pairplot(data, hue='diagnosis', height=2.5)
-        plt.savefig(f'/content/FedHealthDP_Project/data/eda/breast_pairplot_{dataset_index}.png')
-        plt.close()
-        logging.info("数据可视化完成")
-    except Exception as e:
-        logging.error(f"数据可视化失败: {e}")
-        raise
-
-
 def feature_engineering(data):
     try:
         # 标签编码
@@ -138,15 +127,20 @@ def feature_selection(data, target_column='diagnosis', k=10):
         logging.error(f"特征选择失败: {e}")
         raise
 
-def visualize_data(data, dataset_index):
+def balance_data(data, target_column='diagnosis'):
     try:
-        plt.figure(figsize=(20, 20))
-        sns.pairplot(data, hue='diagnosis', height=2.5)
-        plt.savefig(f'/content/FedHealthDP_Project/data/eda/breast_pairplot_{dataset_index}.png')
-        plt.close()
-        logging.info("数据可视化完成")
+        X = data.drop(columns=[target_column])
+        y = data[target_column]
+        
+        smote_enn = SMOTEENN(random_state=42)
+        X_resampled, y_resampled = smote_enn.fit_resample(X, y)
+        
+        balanced_data = pd.concat([pd.DataFrame(X_resampled, columns=X.columns), pd.Series(y_resampled, name=target_column)], axis=1)
+        
+        logging.info("数据平衡处理完成")
+        return balanced_data
     except Exception as e:
-        logging.error(f"数据可视化失败: {e}")
+        logging.error(f"数据平衡处理失败: {e}")
         raise
 
 def split_data(data, selected_features, target_column='diagnosis', test_size=0.2, random_state=42):
@@ -167,7 +161,6 @@ def split_data(data, selected_features, target_column='diagnosis', test_size=0.2
     except Exception as e:
         logging.error(f"数据分割失败: {e}")
         raise
-
 
 def main():
     try:
@@ -199,8 +192,8 @@ def main():
             # 特征选择
             data, selected_features = feature_selection(data)
             
-            # 数据可视化
-            visualize_data(data, i)
+            # 数据平衡
+            data = balance_data(data)
             
             # 数据分割
             X_train, X_test, y_train, y_test = split_data(data, selected_features)

@@ -16,7 +16,6 @@ import logging
 # 初始化日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# 定义更复杂的模型
 class DeeperNN(nn.Module):
     def __init__(self, input_shape):
         super(DeeperNN, self).__init__()
@@ -43,7 +42,6 @@ class DeeperNN(nn.Module):
     def forward(self, x):
         return self.layers(x)
 
-# 数据加载和预处理函数
 def preprocess_data(file_path, y_file_path, feature_columns, y_column_name, categorical_columns=None):
     data = pd.read_csv(file_path)
     y_data = pd.read_csv(y_file_path)
@@ -75,14 +73,12 @@ def preprocess_data(file_path, y_file_path, feature_columns, y_column_name, cate
     logging.info("Matching feature columns: %s", existing_features)
 
     data = data[existing_features]
-    
     data = data.apply(pd.to_numeric, errors='coerce').fillna(0)
 
     logging.info(f"Data loaded from {file_path} with {data.shape[1]} features.")
 
     return torch.tensor(data.values.astype(np.float32)), y, data.columns.tolist()
 
-# 特征选择函数
 def select_features(X, y, feature_names, num_features=10):
     logging.info("Performing feature selection...")
     model = RandomForestClassifier(random_state=42)
@@ -91,7 +87,6 @@ def select_features(X, y, feature_names, num_features=10):
     selected_indices = np.argsort(importances)[-num_features:]
     return X[:, selected_indices], importances[selected_indices], np.array(feature_names)[selected_indices]
 
-# 计算模型性能指标
 def compute_metrics(outputs, targets, threshold=0.5):
     predictions = (outputs >= threshold).float()
     accuracy = accuracy_score(targets, predictions)
@@ -103,14 +98,12 @@ def compute_metrics(outputs, targets, threshold=0.5):
     kappa = cohen_kappa_score(targets, predictions)
     return accuracy, precision, recall, f1, roc_auc, mcc, kappa
 
-# 选择最佳阈值
 def find_best_threshold(outputs, targets):
     precisions, recalls, thresholds = precision_recall_curve(targets, outputs)
     f1_scores = 2 * precisions * recalls / (precisions + recalls)
     best_threshold = thresholds[np.argmax(f1_scores)]
     return best_threshold
 
-# 评估模型
 def evaluate_model(model, X_test, y_test, threshold=0.5, output_dir='results'):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -120,7 +113,6 @@ def evaluate_model(model, X_test, y_test, threshold=0.5, output_dir='results'):
         outputs = model(X_test).cpu().detach()
         predictions = (outputs >= threshold).float()
         
-    # 计算各种指标
     accuracy, precision, recall, f1, roc_auc, mcc, kappa = compute_metrics(outputs, y_test, threshold)
     logging.info(f"Accuracy: {accuracy:.4f}")
     logging.info(f"Precision: {precision:.4f}")
@@ -130,14 +122,11 @@ def evaluate_model(model, X_test, y_test, threshold=0.5, output_dir='results'):
     logging.info(f"MCC: {mcc:.4f}")
     logging.info(f"Kappa: {kappa:.4f}")
 
-    # 打印分类报告
     logging.info("Classification Report:")
     logging.info("\n" + classification_report(y_test, predictions, zero_division=0))
 
-    # 打印记录数量
     logging.info(f"Number of records in evaluation: {len(y_test)}")
 
-    # 绘制混淆矩阵并保存到本地文件
     conf_matrix = confusion_matrix(y_test, predictions)
     plt.figure(figsize=(10, 7))
     sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues')
@@ -147,7 +136,6 @@ def evaluate_model(model, X_test, y_test, threshold=0.5, output_dir='results'):
     plt.savefig(os.path.join(output_dir, 'confusion_matrix.png'))
     plt.close()
 
-    # 绘制ROC曲线并保存到本地文件
     fpr, tpr, _ = roc_curve(y_test, outputs)
     roc_auc = auc(fpr, tpr)
     plt.figure()
@@ -162,7 +150,6 @@ def evaluate_model(model, X_test, y_test, threshold=0.5, output_dir='results'):
     plt.savefig(os.path.join(output_dir, 'roc_curve.png'))
     plt.close()
 
-    # 绘制Precision-Recall曲线并保存到本地文件
     precisions, recalls, _ = precision_recall_curve(y_test, outputs)
     plt.figure()
     plt.plot(recalls, precisions, marker='.', color='blue')
@@ -172,7 +159,6 @@ def evaluate_model(model, X_test, y_test, threshold=0.5, output_dir='results'):
     plt.savefig(os.path.join(output_dir, 'precision_recall_curve.png'))
     plt.close()
 
-# 交叉验证训练和评估
 def cross_validate_model(X, y, feature_names, num_folds=5, output_dir='results'):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -192,7 +178,6 @@ def cross_validate_model(X, y, feature_names, num_folds=5, output_dir='results')
         criterion = nn.BCELoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
         
-        # 训练模型
         num_epochs = 100
         train_loss_per_epoch = []
         val_loss_per_epoch = []
@@ -214,13 +199,12 @@ def cross_validate_model(X, y, feature_names, num_folds=5, output_dir='results')
         train_losses.append(train_loss_per_epoch)
         val_losses.append(val_loss_per_epoch)
         
-        # 评估模型
         best_threshold = find_best_threshold(model(X_val).cpu().detach(), y_val)
         accuracy, precision, recall, f1, roc_auc, mcc, kappa = compute_metrics(model(X_val).cpu().detach(), y_val, threshold=best_threshold)
         fold_results.append((accuracy, precision, recall, f1, roc_auc, mcc, kappa))
     
     fold_results = np.array(fold_results)
-    logging.info("Cross-validation results:")
+    logging.info(f"Cross-validation results:")
     logging.info(f"Accuracy: {fold_results[:,0].mean():.4f} ± {fold_results[:,0].std():.4f}")
     logging.info(f"Precision: {fold_results[:,1].mean():.4f} ± {fold_results[:,1].std():.4f}")
     logging.info(f"Recall: {fold_results[:,2].mean():.4f} ± {fold_results[:,2].std():.4f}")
@@ -229,7 +213,6 @@ def cross_validate_model(X, y, feature_names, num_folds=5, output_dir='results')
     logging.info(f"MCC: {fold_results[:,5].mean():.4f} ± {fold_results[:,5].std():.4f}")
     logging.info(f"Kappa: {fold_results[:,6].mean():.4f} ± {fold_results[:,6].std():.4f}")
 
-    # 绘制学习曲线并保存到本地文件
     plt.figure()
     for i in range(num_folds):
         plt.plot(train_losses[i], label=f'Train Fold {i+1}')
@@ -241,7 +224,6 @@ def cross_validate_model(X, y, feature_names, num_folds=5, output_dir='results')
     plt.savefig(os.path.join(output_dir, 'learning_curves.png'))
     plt.close()
 
-# 评估经典机器学习模型
 def evaluate_classical_models(X_train, y_train, X_test, y_test, output_dir='results'):
     models = {
         'RandomForest': RandomForestClassifier(random_state=42),
@@ -270,8 +252,6 @@ def evaluate_classical_models(X_train, y_train, X_test, y_test, output_dir='resu
 
     return results
 
-# 集成学习预测函数
-# 调整权重的集成方法
 def ensemble_predict(models, X, weights):
     predictions = [model(X) for model in models]
     weighted_predictions = torch.zeros_like(predictions[0])
@@ -279,7 +259,6 @@ def ensemble_predict(models, X, weights):
         weighted_predictions += weight * prediction
     return weighted_predictions / sum(weights)
 
-# 评估加权集成模型
 def evaluate_ensemble(models, X_test, y_test, threshold=0.5, output_dir='results', weights=None):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -291,7 +270,6 @@ def evaluate_ensemble(models, X_test, y_test, threshold=0.5, output_dir='results
         outputs = ensemble_predict(models, X_test, weights).cpu().detach()
         predictions = (outputs >= threshold).float()
     
-    # 计算各种指标
     accuracy, precision, recall, f1, roc_auc, mcc, kappa = compute_metrics(outputs, y_test, threshold)
     logging.info(f"Ensemble Accuracy: {accuracy:.4f}")
     logging.info(f"Ensemble Precision: {precision:.4f}")
@@ -301,11 +279,9 @@ def evaluate_ensemble(models, X_test, y_test, threshold=0.5, output_dir='results
     logging.info(f"Ensemble MCC: {mcc:.4f}")
     logging.info(f"Ensemble Kappa: {kappa:.4f}")
 
-    # 打印分类报告
     logging.info("Ensemble Classification Report:")
     logging.info("\n" + classification_report(y_test, predictions, zero_division=0))
 
-    # 绘制混淆矩阵并保存到本地文件
     conf_matrix = confusion_matrix(y_test, predictions)
     plt.figure(figsize=(10, 7))
     sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues')
@@ -315,7 +291,6 @@ def evaluate_ensemble(models, X_test, y_test, threshold=0.5, output_dir='results
     plt.savefig(os.path.join(output_dir, 'ensemble_confusion_matrix.png'))
     plt.close()
 
-    # 绘制ROC曲线并保存到本地文件
     fpr, tpr, _ = roc_curve(y_test, outputs)
     roc_auc = auc(fpr, tpr)
     plt.figure()
@@ -330,7 +305,6 @@ def evaluate_ensemble(models, X_test, y_test, threshold=0.5, output_dir='results
     plt.savefig(os.path.join(output_dir, 'ensemble_roc_curve.png'))
     plt.close()
 
-    # 绘制Precision-Recall曲线并保存到本地文件
     precisions, recalls, _ = precision_recall_curve(y_test, outputs)
     plt.figure()
     plt.plot(recalls, precisions, marker='.', color='blue')
@@ -340,12 +314,10 @@ def evaluate_ensemble(models, X_test, y_test, threshold=0.5, output_dir='results
     plt.savefig(os.path.join(output_dir, 'ensemble_precision_recall_curve.png'))
     plt.close()
 
-# 加载特征列
 with open('/content/FedHealthDP_Project/data/split/breast_features.csv', 'r') as f:
     breast_feature_columns = f.read().splitlines()
 
 try:
-    # 加载乳腺癌测试数据
     X_breast_test, y_breast_test, feature_names = preprocess_data(
         '/content/FedHealthDP_Project/data/split/breast_cancer_X_test.csv',
         '/content/FedHealthDP_Project/data/split/breast_cancer_y_test.csv',
@@ -353,27 +325,21 @@ try:
         'diagnosis'
     )
 
-    # 特征选择
     X_breast_test, selected_importances, selected_feature_names = select_features(X_breast_test, y_breast_test, feature_names, num_features=10)
 
-    # 加载训练好的模型
-    # 加载训练好的模型
     models = []
-    for i in range(3):  # 假设已经训练了3个模型
+    for i in range(3):
         model = DeeperNN(X_breast_test.shape[1])
         model.load_state_dict(torch.load(f'/content/FedHealthDP_Project/models/global_model_{i}.pth'))
         model.eval()
         models.append(model)
 
-    # 定义模型权重
-    weights = [0.4, 0.3, 0.3]  # 根据各模型的性能进行调整
+    weights = [0.4, 0.3, 0.3]
 
-    # 评估乳腺癌模型
     logging.info("Evaluating Ensemble Breast Cancer Model")
     best_threshold_breast = find_best_threshold(ensemble_predict(models, X_breast_test, weights).cpu().detach(), y_breast_test)
     evaluate_ensemble(models, X_breast_test, y_breast_test, threshold=best_threshold_breast, output_dir='breast_cancer_results', weights=weights)
 
-    # 加载乳腺癌训练数据并进行交叉验证
     logging.info("Cross-validating Breast Cancer Model")
     X_breast_train, y_breast_train, feature_names = preprocess_data(
         '/content/FedHealthDP_Project/data/split/breast_cancer_X_train.csv',
@@ -384,11 +350,9 @@ try:
     X_breast_train, selected_importances, selected_feature_names = select_features(X_breast_train, y_breast_train, feature_names, num_features=10)
     cross_validate_model(X_breast_train, y_breast_train, feature_names, output_dir='breast_cancer_results')
 
-    # 评估经典机器学习模型
     logging.info("Evaluating Classical Models")
     evaluate_classical_models(X_breast_train.numpy(), y_breast_train.numpy(), X_breast_test.numpy(), y_breast_test.numpy(), output_dir='breast_cancer_results')
 
-    # 绘制特征重要性图并保存到本地文件
     plt.figure()
     plt.barh(selected_feature_names, selected_importances)
     plt.xlabel('Feature Importance')
