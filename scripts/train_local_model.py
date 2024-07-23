@@ -16,16 +16,27 @@ from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 import seaborn as sns
 import logging
+from sklearn.model_selection import StratifiedKFold
+# 经典算法比较实验
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
+
+
 
 # 初始化日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# 定义更复杂的模型
 class DeeperNN(nn.Module):
     def __init__(self, input_shape):
         super(DeeperNN, self).__init__()
         self.layers = nn.Sequential(
-            nn.Linear(input_shape, 128),
+            nn.Linear(input_shape, 512),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(256, 128),
             nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(128, 64),
@@ -40,6 +51,7 @@ class DeeperNN(nn.Module):
 
     def forward(self, x):
         return self.layers(x)
+
 
 # 数据预处理函数
 def preprocess_data(file_path, y_file_path, y_column_name, all_feature_columns, categorical_columns=None):
@@ -165,7 +177,7 @@ def add_dp_noise(gradients, sensitivity, epsilon, dynamic_factor=1.0):
     
 # 联邦学习客户端类
 class FederatedLearningClient:
-    def __init__(self, model, data, target, epochs=1, batch_size=32, dp_sensitivity=0.1, dp_epsilon=1.0, dp_dynamic_factor=1.0, val_split=0.2):
+    def __init__(self, model, data, target, epochs=1, batch_size=32, dp_sensitivity=0.1, dp_epsilon=1.0, dp_dynamic_factor=1.0, val_split=0.2, early_stopping_patience=10):
         self.model = model
         self.data = data
         self.target = target
@@ -174,12 +186,15 @@ class FederatedLearningClient:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
         self.criterion = nn.BCELoss()
-        self.optimizer = optim.AdamW(self.model.parameters(), weight_decay=1e-4)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=0.0001, weight_decay=1e-5)
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', patience=5, factor=0.5)
         self.dp_sensitivity = dp_sensitivity
         self.dp_epsilon = dp_epsilon
         self.dp_dynamic_factor = dp_dynamic_factor
         self.best_threshold = 0.5
+        self.early_stopping_patience = early_stopping_patience
+        self.early_stopping_counter = 0
+        self.best_val_loss = float('inf')
 
         # 划分训练集和验证集
         val_size = int(len(data) * val_split)
@@ -273,6 +288,16 @@ class FederatedLearningClient:
             self.scheduler.step(epoch_val_loss)
             logging.info(f"Epoch [{epoch+1}/{self.epochs}], Train Loss: {epoch_train_loss:.4f}, Val Loss: {epoch_val_loss:.4f}, Train Acc: {correct_train/total_train:.4f}, Val Acc: {correct_val/total_val:.4f}, Learning Rate: {self.optimizer.param_groups[0]['lr']:.6f}")
 
+            # 早停法
+            if epoch_val_loss < self.best_val_loss:
+                self.best_val_loss = epoch_val_loss
+                self.early_stopping_counter = 0
+            else:
+                self.early_stopping_counter += 1
+                if self.early_stopping_counter >= self.early_stopping_patience:
+                    logging.info(f"Early stopping at epoch {epoch+1}")
+                    break
+
         self.model.eval()
         with torch.no_grad():
             outputs = self.model(self.data.to(self.device)).cpu()
@@ -293,7 +318,9 @@ def compare_classical_algorithms(X_train, y_train, X_test, y_test):
     classifiers = {
         'RandomForest': RandomForestClassifier(random_state=42),
         'SVM': SVC(probability=True, random_state=42),
-        'DecisionTree': DecisionTreeClassifier(random_state=42)
+        'DecisionTree': DecisionTreeClassifier(random_state=42),
+        'XGBoost': XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42),
+        'LightGBM': LGBMClassifier(random_state=42)
     }
 
     results = {}
@@ -306,6 +333,7 @@ def compare_classical_algorithms(X_train, y_train, X_test, y_test):
         logging.info(f"{name} - Accuracy: {metrics[0]:.4f}, Precision: {metrics[1]:.4f}, Recall: {metrics[2]:.4f}, F1 Score: {metrics[3]:.4f}, ROC AUC: {metrics[4]:.4f}")
 
     return results
+
 
 # 联邦学习服务器类
 class FederatedLearningServer:
@@ -509,3 +537,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

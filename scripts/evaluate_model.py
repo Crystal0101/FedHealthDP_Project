@@ -21,7 +21,13 @@ class DeeperNN(nn.Module):
     def __init__(self, input_shape):
         super(DeeperNN, self).__init__()
         self.layers = nn.Sequential(
-            nn.Linear(input_shape, 128),
+            nn.Linear(input_shape, 512),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(256, 128),
             nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(128, 64),
@@ -127,6 +133,9 @@ def evaluate_model(model, X_test, y_test, threshold=0.5, output_dir='results'):
     # 打印分类报告
     logging.info("Classification Report:")
     logging.info("\n" + classification_report(y_test, predictions, zero_division=0))
+
+    # 打印记录数量
+    logging.info(f"Number of records in evaluation: {len(y_test)}")
 
     # 绘制混淆矩阵并保存到本地文件
     conf_matrix = confusion_matrix(y_test, predictions)
@@ -261,49 +270,133 @@ def evaluate_classical_models(X_train, y_train, X_test, y_test, output_dir='resu
 
     return results
 
+# 集成学习预测函数
+# 调整权重的集成方法
+def ensemble_predict(models, X, weights):
+    predictions = [model(X) for model in models]
+    weighted_predictions = torch.zeros_like(predictions[0])
+    for weight, prediction in zip(weights, predictions):
+        weighted_predictions += weight * prediction
+    return weighted_predictions / sum(weights)
+
+# 评估加权集成模型
+def evaluate_ensemble(models, X_test, y_test, threshold=0.5, output_dir='results', weights=None):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    if weights is None:
+        weights = [1.0 / len(models)] * len(models)
+
+    with torch.no_grad():
+        outputs = ensemble_predict(models, X_test, weights).cpu().detach()
+        predictions = (outputs >= threshold).float()
+    
+    # 计算各种指标
+    accuracy, precision, recall, f1, roc_auc, mcc, kappa = compute_metrics(outputs, y_test, threshold)
+    logging.info(f"Ensemble Accuracy: {accuracy:.4f}")
+    logging.info(f"Ensemble Precision: {precision:.4f}")
+    logging.info(f"Ensemble Recall: {recall:.4f}")
+    logging.info(f"Ensemble F1 Score: {f1:.4f}")
+    logging.info(f"Ensemble ROC AUC: {roc_auc:.4f}")
+    logging.info(f"Ensemble MCC: {mcc:.4f}")
+    logging.info(f"Ensemble Kappa: {kappa:.4f}")
+
+    # 打印分类报告
+    logging.info("Ensemble Classification Report:")
+    logging.info("\n" + classification_report(y_test, predictions, zero_division=0))
+
+    # 绘制混淆矩阵并保存到本地文件
+    conf_matrix = confusion_matrix(y_test, predictions)
+    plt.figure(figsize=(10, 7))
+    sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues')
+    plt.title('Ensemble Confusion Matrix')
+    plt.xlabel('Predicted')
+    plt.ylabel('Actual')
+    plt.savefig(os.path.join(output_dir, 'ensemble_confusion_matrix.png'))
+    plt.close()
+
+    # 绘制ROC曲线并保存到本地文件
+    fpr, tpr, _ = roc_curve(y_test, outputs)
+    roc_auc = auc(fpr, tpr)
+    plt.figure()
+    plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {roc_auc:.2f})')
+    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver Operating Characteristic')
+    plt.legend(loc='lower right')
+    plt.savefig(os.path.join(output_dir, 'ensemble_roc_curve.png'))
+    plt.close()
+
+    # 绘制Precision-Recall曲线并保存到本地文件
+    precisions, recalls, _ = precision_recall_curve(y_test, outputs)
+    plt.figure()
+    plt.plot(recalls, precisions, marker='.', color='blue')
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.title('Precision-Recall Curve')
+    plt.savefig(os.path.join(output_dir, 'ensemble_precision_recall_curve.png'))
+    plt.close()
+
 # 加载特征列
 with open('/content/FedHealthDP_Project/data/split/breast_features.csv', 'r') as f:
     breast_feature_columns = f.read().splitlines()
 
-# 加载模型
-model_path = '/content/FedHealthDP_Project/models/global_model.pth'
-
 try:
-    datasets = [
-        ('/content/FedHealthDP_Project/data/split/breast_cancer_X_test_0.csv', '/content/FedHealthDP_Project/data/split/breast_cancer_y_test_0.csv'),
-        ('/content/FedHealthDP_Project/data/split/breast_cancer_X_test_1.csv', '/content/FedHealthDP_Project/data/split/breast_cancer_y_test_1.csv'),
-        ('/content/FedHealthDP_Project/data/split/breast_cancer_X_test_2.csv', '/content/FedHealthDP_Project/data/split/breast_cancer_y_test_2.csv')
-    ]
-    
-    for i, (X_path, y_path) in enumerate(datasets):
-        X_test, y_test, feature_names = preprocess_data(X_path, y_path, breast_feature_columns, 'diagnosis')
-        
-        X_test, selected_importances, selected_feature_names = select_features(X_test, y_test, feature_names, num_features=10)
-        
-        model = DeeperNN(X_test.shape[1])
-        model.load_state_dict(torch.load(model_path))
+    # 加载乳腺癌测试数据
+    X_breast_test, y_breast_test, feature_names = preprocess_data(
+        '/content/FedHealthDP_Project/data/split/breast_cancer_X_test.csv',
+        '/content/FedHealthDP_Project/data/split/breast_cancer_y_test.csv',
+        breast_feature_columns,
+        'diagnosis'
+    )
+
+    # 特征选择
+    X_breast_test, selected_importances, selected_feature_names = select_features(X_breast_test, y_breast_test, feature_names, num_features=10)
+
+    # 加载训练好的模型
+    # 加载训练好的模型
+    models = []
+    for i in range(3):  # 假设已经训练了3个模型
+        model = DeeperNN(X_breast_test.shape[1])
+        model.load_state_dict(torch.load(f'/content/FedHealthDP_Project/models/global_model_{i}.pth'))
         model.eval()
-        
-        logging.info(f"Evaluating Breast Cancer Model for dataset {i}")
-        best_threshold = find_best_threshold(model(X_test).cpu().detach(), y_test)
-        evaluate_model(model, X_test, y_test, threshold=best_threshold, output_dir=f'breast_cancer_results_{i}')
-        
-        logging.info(f"Cross-validating Breast Cancer Model for dataset {i}")
-        X_train, y_train, feature_names = preprocess_data(X_path.replace('_test_', '_train_'), y_path.replace('_test_', '_train_'), breast_feature_columns, 'diagnosis')
-        X_train, selected_importances, selected_feature_names = select_features(X_train, y_train, feature_names, num_features=10)
-        cross_validate_model(X_train, y_train, feature_names, output_dir=f'breast_cancer_results_{i}')
-        
-        logging.info(f"Evaluating Classical Models for dataset {i}")
-        evaluate_classical_models(X_train.numpy(), y_train.numpy(), X_test.numpy(), y_test.numpy(), output_dir=f'breast_cancer_results_{i}')
-        
-        plt.figure()
-        plt.barh(selected_feature_names, selected_importances)
-        plt.xlabel('Feature Importance')
-        plt.ylabel('Features')
-        plt.title(f'Top 10 Feature Importances - Dataset {i}')
-        plt.tight_layout()
-        plt.savefig(os.path.join(f'breast_cancer_results_{i}', 'feature_importance.png'))
-        plt.close()
+        models.append(model)
+
+    # 定义模型权重
+    weights = [0.4, 0.3, 0.3]  # 根据各模型的性能进行调整
+
+    # 评估乳腺癌模型
+    logging.info("Evaluating Ensemble Breast Cancer Model")
+    best_threshold_breast = find_best_threshold(ensemble_predict(models, X_breast_test, weights).cpu().detach(), y_breast_test)
+    evaluate_ensemble(models, X_breast_test, y_breast_test, threshold=best_threshold_breast, output_dir='breast_cancer_results', weights=weights)
+
+    # 加载乳腺癌训练数据并进行交叉验证
+    logging.info("Cross-validating Breast Cancer Model")
+    X_breast_train, y_breast_train, feature_names = preprocess_data(
+        '/content/FedHealthDP_Project/data/split/breast_cancer_X_train.csv',
+        '/content/FedHealthDP_Project/data/split/breast_cancer_y_train.csv',
+        breast_feature_columns,
+        'diagnosis'
+    )
+    X_breast_train, selected_importances, selected_feature_names = select_features(X_breast_train, y_breast_train, feature_names, num_features=10)
+    cross_validate_model(X_breast_train, y_breast_train, feature_names, output_dir='breast_cancer_results')
+
+    # 评估经典机器学习模型
+    logging.info("Evaluating Classical Models")
+    evaluate_classical_models(X_breast_train.numpy(), y_breast_train.numpy(), X_breast_test.numpy(), y_breast_test.numpy(), output_dir='breast_cancer_results')
+
+    # 绘制特征重要性图并保存到本地文件
+    plt.figure()
+    plt.barh(selected_feature_names, selected_importances)
+    plt.xlabel('Feature Importance')
+    plt.ylabel('Features')
+    plt.title('Top 10 Feature Importances')
+    plt.tight_layout()
+    plt.savefig(os.path.join('breast_cancer_results', 'feature_importance.png'))
+    plt.close()
 
 except Exception as e:
     logging.error(f"An error occurred: {e}")
