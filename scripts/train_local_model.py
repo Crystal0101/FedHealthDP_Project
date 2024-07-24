@@ -118,25 +118,23 @@ def compare_feature_selection_methods(X, y):
 
     return results
 
-def select_features(X, y, num_features=10):
+def select_features(X, y, feature_names, num_features=10):
     logging.info("Performing feature selection...")
-    X_df = pd.DataFrame(X.numpy())
-    y_series = pd.Series(y.numpy())
 
-    mi = mutual_info_classif(X_df, y_series, discrete_features='auto')
-    selected_features = np.argsort(mi)[-num_features:]
-    if selected_features.size == 0:
-        logging.info("No features selected using mutual information. Using RandomForest for feature selection.")
-        model = RandomForestClassifier(random_state=42)
-        model.fit(X_df, y_series)
-        importances = model.feature_importances_
-        selected_features = np.argsort(importances)[-num_features:]
+    # 使用互信息
+    mi = mutual_info_classif(X.numpy(), y.numpy())
+    mi_selected_indices = np.argsort(mi)[-num_features:]
 
-    logging.info(f"Selected features: {selected_features}")
-    if selected_features.size == 0:
-        return X
+    # 使用随机森林
+    rf = RandomForestClassifier(random_state=42)
+    rf.fit(X.numpy(), y.numpy())
+    rf_selected_indices = np.argsort(rf.feature_importances_)[-num_features:]
 
-    return X[:, selected_features]
+    # 合并结果
+    combined_indices = np.unique(np.concatenate((mi_selected_indices, rf_selected_indices)))
+    selected_indices = combined_indices[:num_features]  # 取前num_features个特征
+
+    return X[:, selected_indices], selected_indices, np.array(feature_names)[selected_indices]
 
 def compute_metrics(outputs, targets, threshold=0.5):
     predictions = (outputs >= threshold).float()
@@ -168,7 +166,7 @@ class FederatedLearningClient:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
         self.criterion = nn.BCELoss()
-        self.optimizer = optim.Adam(self.model.parameters(), lr=0.0001, weight_decay=1e-5)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=0.0001, weight_decay=1e-5)  # 增加正则化项
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', patience=5, factor=0.5)
         self.dp_sensitivity = dp_sensitivity
         self.dp_epsilon = dp_epsilon
@@ -476,7 +474,7 @@ def main():
             feature_selection_results = compare_feature_selection_methods(X_train, y_train)
             logging.info(f"Dataset {i} feature selection comparison results: %s", feature_selection_results)
             
-            X_train = select_features(X_train, y_train, num_features=10)
+            X_train, selected_importances, selected_feature_names = select_features(X_train, y_train, feature_columns, num_features=10)
             
             if len(torch.unique(y_train)) > 1:
                 X_train, y_train = balance_data(X_train, y_train, method='SMOTE')
@@ -488,7 +486,9 @@ def main():
 
         federated_training(clients, server, rounds=10, output_dir='breast_cancer_training_results')
 
-        torch.save(global_model.state_dict(), '/content/FedHealthDP_Project/models/global_model.pth')
+        # 保存每个客户端的模型
+        for i, client in enumerate(clients):
+            torch.save(client.model.state_dict(), f'/content/FedHealthDP_Project/models/global_model_{i}.pth')
 
         X_train_combined, y_train_combined = [], []
         for X_path, y_path in datasets:
